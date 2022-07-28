@@ -1,2 +1,3 @@
-# bert-from-scratch-on-sagemaker
-Pretraining a large language model from scratch with your own custom domain data and Amazon SageMaker
+# BERT from scratch on Amazon SageMaker 
+
+**Pretraining a large language model (LLM) from scratch with your own custom domain corpus and Amazon SageMaker**
