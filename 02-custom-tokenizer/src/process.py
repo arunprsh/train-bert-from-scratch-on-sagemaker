@@ -33,5 +33,20 @@ tokenizer = BertWordPieceTokenizer()
 tokenizer.train(files=paths, vocab_size=VOCAB_SIZE)
 
 # Save trained custom tokenizer to local output path
-logger.info('Saving trained tokenizer to local output location')
+logger.info(f'Saving extracted custom vocabulary to {LOCAL_OUTPUT_PATH}')
 tokenizer.save_model(LOCAL_OUTPUT_PATH)
+
+# Re-create custom tokenizer using vocab from local output path
+logger.info(f'Re-create BertWordPiece custom tokenizer using extracted custom vocab in {LOCAL_OUTPUT_PATH}')
+tokenizer = BertWordPieceTokenizer(f'{LOCAL_OUTPUT_PATH}/vocab.txt')
+
+# Evaluating custom tokenizer 
+logger.info('Evaluating custom tokenizer')
+test_sentence = 'covid19 is a virus'
+logger.info(f'Test sentence: {test_sentence}')
+tokens = tokenizer.encode(test_sentence).tokens
+logger.info(f'Encoded sentence: {tokens}')
+token_id = tokenizer.token_to_id('covid19')
+logger.info(f'Token ID for token (covid19) = {token_id}')
+vocab_size = tokenizer.get_vocab_size()
+logger.info(f'Vocabulary size = {vocab_size}')
