@@ -1,22 +1,37 @@
 from tokenizers import BertWordPieceTokenizer
 from pathlib import Path
 import transformers 
-import pandas as pd
+import tokenizers
 import logging
+import sys
 import os
 
-logger = logging.getLogger('sagemaker')
-logger.setLevel(logging.DEBUG)
-logger.addHandler(logging.StreamHandler())
+# Setup logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.getLevelName('INFO'), 
+                    handlers=[logging.StreamHandler(sys.stdout)], 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-logging.info(f'[Using transformers: {transformers.__version__}]')
+# Log versions of dependencies
+logger.info(f'[Using Transformers: {transformers.__version__}]')
+logger.info(f'[Using Tokenizers: {tokenizers.__version__}]')
 
-corpus_path = '/opt/ml/processing/input'
+# Essentials
+# is mapped to S3 input location for covid articles 
+LOCAL_INPUT_PATH = '/opt/ml/processing/input' 
+# is mapped to S3 output location where we want to save the custom vocabulary from the trained tokenizer
+LOCAL_OUTPUT_PATH = '/opt/ml/processing/output'
+VOCAB_SIZE = 30522
 
-paths = [str(x) for x in Path(corpus_path).glob('*.txt')]
-logger.info(f'Reading files in {paths}')
+# Read input files from local input path 
+logger.info(f'Reading input files from {LOCAL_INPUT_PATH}')
+paths = [str(x) for x in Path(LOCAL_INPUT_PATH).glob('*.txt')]
 
+# Train custom BertWordPiece tokenizer
+logger.info(f'Training BertWordPiece custom tokenizer using files in {paths}')
 tokenizer = BertWordPieceTokenizer()
-tokenizer.train(files=paths, vocab_size=30522)
+tokenizer.train(files=paths, vocab_size=VOCAB_SIZE)
 
-tokenizer.save_model('/opt/ml/processing/output', prefix='tokenizer/')
+# Save trained custom tokenizer to local output path
+logger.info('Saving trained tokenizer to local output location')
+tokenizer.save_model(LOCAL_OUTPUT_PATH)
