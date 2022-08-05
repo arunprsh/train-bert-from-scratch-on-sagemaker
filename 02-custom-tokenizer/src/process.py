@@ -24,7 +24,7 @@ LOCAL_OUTPUT_PATH = '/opt/ml/processing/output'
 VOCAB_SIZE = 30522
 
 # Read input files from local input path 
-logger.info(f'Reading input files from {LOCAL_INPUT_PATH}')
+logger.info(f'Reading input files from [{LOCAL_INPUT_PATH}/]')
 paths = [str(x) for x in Path(LOCAL_INPUT_PATH).glob('*.txt')]
 
 # Train custom BertWordPiece tokenizer
@@ -33,7 +33,7 @@ tokenizer = BertWordPieceTokenizer()
 tokenizer.train(files=paths, vocab_size=VOCAB_SIZE)
 
 # Save trained custom tokenizer to local output path
-logger.info(f'Saving extracted custom vocabulary to {LOCAL_OUTPUT_PATH}')
+logger.info(f'Saving extracted custom vocabulary to [{LOCAL_OUTPUT_PATH}/]')
 tokenizer.save_model(LOCAL_OUTPUT_PATH)
 
 # Re-create custom tokenizer using vocab from local output path

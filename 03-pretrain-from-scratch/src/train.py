@@ -1,4 +1,12 @@
-from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments, LineByLineTextDataset, BertTokenizerFast, BertForMaskedLM, BertConfig, pipeline 
+from transformers import DataCollatorForLanguageModeling
+from transformers import TrainingArguments
+from transformers import BertTokenizerFast
+from transformers import BertForMaskedLM
+from transformers import BertConfig
+from transformers import pipeline 
+from datasets import load_dataset
+from transformers import Trainer
+from datasets import DatasetDict
 import transformers
 import sagemaker
 import datasets
@@ -9,13 +17,15 @@ import shutil
 import torch
 import boto3
 import time
+import math
 import sys
 import os
 
 # Setup logging
-logger = logging.getLogger('sagemaker')
-logger.setLevel(logging.DEBUG)
-logger.addHandler(logging.StreamHandler())
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.getLevelName('INFO'), 
+                    handlers=[logging.StreamHandler(sys.stdout)], 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # Log versions of dependencies
 logger.info(f'[Using Transformers: {transformers.__version__}]')
@@ -23,31 +33,43 @@ logger.info(f'[Using SageMaker: {sagemaker.__version__}]')
 logger.info(f'[Using Datasets: {datasets.__version__}]')
 logger.info(f'[Using Torch: {torch.__version__}]')
 
-# TODO
+# Essentials 
 config = BertConfig()
+s3 = boto3.resource('s3')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    
-    # [IMPORTANT] Hyperparameters sent by the client (Studio notebook with the driver code to launch training) are passed as command-line arguments to the training script
-    logger.info('Handling command line arguments')
-    parser.add_argument('--output_path', type=str)
-    parser.add_argument('--model_name', type=str)
+    logger.info('Parsing command line arguments')
     parser.add_argument('--input_dir', type=str, default=os.environ['SM_INPUT_DIR'])
     parser.add_argument('--model_dir', type=str, default=os.environ['SM_MODEL_DIR'])
-    parser.add_argument('--n_gpus', type=str, default=os.environ['SM_NUM_GPUS'])
-    parser.add_argument('--training_dir', type=str, default=os.environ['SM_CHANNEL_TRAIN'])
+    parser.add_argument('--train', type=str, default=os.environ['SM_CHANNEL_TRAIN'])
     parser.add_argument('--current_host', type=str, default=os.environ['SM_CURRENT_HOST'])
-    args, _ = parser.parse_known_args()
+    parser.add_argument('--num_gpus', type=int, default=os.environ['SM_NUM_GPUS'])
     
+    # [IMPORTANT] Hyperparameters sent by the client (Studio notebook with the driver code to launch training) 
+    # are passed as command-line arguments to the training script
+    parser.add_argument('--s3_bucket', type=str)
+    parser.add_argument('--max_len', type=int)
+    parser.add_argument('--num_train_epochs', type=int)
+    parser.add_argument('--per_device_train_batch_size', type=int)
+    args, _ = parser.parse_known_args()
     
     CURRENT_HOST = args.current_host
     logger.info(f'Current host = {CURRENT_HOST}')
+    num_gpus = args.num_gpus
+    logger.info(f'Total number of GPUs per node = {num_gpus}')
+    
+    S3_BUCKET = args.s3_bucket
+    MAX_LENGTH = args.max_len
+    TRAIN_EPOCHS = args.num_train_epochs
+    BATCH_SIZE = args.per_device_train_batch_size
+    SAVE_STEPS = 10000
+    SAVE_TOTAL_LIMIT = 2
     
     # Download saved custom vocabulary file from S3 to local input path of the training cluster
-    s3 = boto3.resource('s3')
-    bucket = s3.Bucket('sagemaker-us-east-1-119174016168')
+    logger.info(f'Downloading custom vocabulary from [{S3_BUCKET}/vocab/] to [{args.input_dir}/vocab/]')
+    bucket = s3.Bucket(S3_BUCKET)
     path = os.path.join(f'{args.input_dir}', 'vocab')
     
     if not os.path.exists(path):
@@ -57,62 +79,91 @@ if __name__ == '__main__':
         bucket.download_fileobj('vocab/vocab.txt', data)
     
      
-
-    logger.info('Re-creating BERT tokenizer')
+    # Re-create BERT WordPiece tokenizer 
+    logger.info(f'Re-creating BERT tokenizer using custom vocabulary from [{args.input_dir}/vocab/]')
     tokenizer = BertTokenizerFast.from_pretrained(f'{args.input_dir}/vocab/', config=config)
-    tokenizer.model_max_length = 256
-    tokenizer.init_kwargs['model_max_length'] = 256
+    tokenizer.model_max_length = MAX_LENGTH
+    tokenizer.init_kwargs['model_max_length'] = MAX_LENGTH
+    logger.info(f'Tokenizer: {tokenizer}')
 
-    # Read dataset and collate to create the mini batches for MLM training
-    dataset = LineByLineTextDataset(tokenizer=tokenizer, 
-                                    file_path=f'{args.training_dir}/articles.txt', 
-                                    block_size=128)
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=0.15)
+    # Read dataset and collate to create the mini batches for Masked Language Model (MLM) training
+    logger.info('Reading and collating input data to create mini batches for Masked Language Model (MLM) training')
+    # dataset = LineByLineTextDataset(tokenizer=tokenizer, file_path=f'{args.train}/covid_articles.txt', block_size=128)
+    dataset = load_dataset('text', data_files=f'{args.train}/covid_articles.txt', split='train', cache_dir='/tmp/cache')
+    logger.info(f'Dataset: {dataset}')
     
+    # Split dataset into train and validation splits 
+    logger.info('Splitting dataset into train and validation splits')
+    train_test_splits = dataset.train_test_split(shuffle=True, seed=123, test_size=0.1)
+    data_splits = DatasetDict({'train': train_test_splits['train'], 
+                               'validation': train_test_splits['test']})
+    logger.info(f'Data splits: {data_splits}')
+    
+    # Tokenize dataset
+    def tokenize_function(examples):
+        return tokenizer(examples['text'], truncation=True, max_length=MAX_LENGTH)
+    
+    logger.info('Tokenizing dataset splits')
+    num_proc = int(os.cpu_count()/num_gpus)
+    tokenized_dataset = data_splits.map(tokenize_function, batched=True, num_proc=num_proc, remove_columns=['text'])
+    logger.info(f'Tokenized dataset: {tokenized_dataset}')
+    
+    # Create data collator
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, 
+                                                    mlm=True, 
+                                                    mlm_probability=0.15)
+        
+    # Load MLM
+    logger.info('Loading BertForMaskedLM model')
     mlm = BertForMaskedLM(config=config)
     
-    # Train Masked Language Model (MLM)
-    training_args = TrainingArguments(output_dir="./covidBERT", 
+    # Train MLM
+    logger.info('Training MLM')
+    training_args = TrainingArguments(output_dir='/tmp/checkpoints', 
                                       overwrite_output_dir=True, 
-                                      num_train_epochs=40, 
-                                      per_device_train_batch_size=32, 
-                                      save_steps=10_000, 
-                                      save_total_limit=2)
+                                      optim='adamw_torch',
+                                      num_train_epochs=TRAIN_EPOCHS,
+                                      per_device_train_batch_size=BATCH_SIZE,
+                                      evaluation_strategy='epoch',
+                                      save_steps=SAVE_STEPS, 
+                                      save_total_limit=SAVE_TOTAL_LIMIT)
     trainer = Trainer(model=mlm, 
                       args=training_args, 
-                      data_collator=data_collator, 
-                      train_dataset=dataset)
+                      data_collator=data_collator,
+                      train_dataset=tokenized_dataset['train'])
+                      eval_dataset=tokenized_dataset['validation'])
     trainer.train()
     
+    eval_results = trainer.evaluate()
+    logger.info(f"Perplexity: {math.exp(eval_results['eval_loss']):.2f}")
+    
+    
     if CURRENT_HOST == 'algo-1':
-    
         # Save trained model to local model directory
-        trainer.save_model(f'{args.model_dir}/bert/')
-        time.sleep(120)
-        print(os.listdir(f'{args.model_dir}/bert/'))
-
-        # Copy trained model from local directory of the training cluster to S3 
-        s3 = boto3.resource('s3')
-        s3.meta.client.upload_file(f'{args.model_dir}/bert/pytorch_model.bin', 'sagemaker-us-east-1-119174016168', 'model/' + 'pytorch_model.bin')
-        s3.meta.client.upload_file(f'{args.model_dir}/bert/config.json', 'sagemaker-us-east-1-119174016168', 'model/' + 'config.json')
-
-        # [IMPORTANT] Copy vocab.txt to local model directory - this is needed to re-create the trained model
-        shutil.copyfile(f'{args.input_dir}/vocab/vocab.txt', f'{args.model_dir}/bert/vocab.txt')
+        logger.info(f'Saving trained MLM to [{args.model_dir}/custom/]')
+        trainer.save_model(f'{args.model_dir}/custom/')
+        time.sleep(120)  # Wait for a few minutes to ensure the model is saved locally
     
+        # Copy trained model from local directory of the training cluster to S3 
+        logger.info(f'Copying saved model from local to [{S3_BUCKET}/model/custom/]')
+        s3.meta.client.upload_file(f'{args.model_dir}/custom/pytorch_model.bin', S3_BUCKET, 'model/custom/pytorch_model.bin')
+        s3.meta.client.upload_file(f'{args.model_dir}/custom/config.json', S3_BUCKET, 'model/custom/config.json')
+
+        # [IMPORTANT] Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
+        logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
+        shutil.copyfile(f'{args.input_dir}/vocab/vocab.txt', f'{args.model_dir}/custom/vocab.txt')
+        
+        # [IMPORTANT] Copy vocab.txt to saved model artifacts location in S3
+        logger.info(f'Copying custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
     
         # Evaluate the trained model 
         logger.info('Create fill-mask task pipeline to evaluate trained MLM')
-        fill_mask = pipeline('fill-mask', model=f'{args.model_dir}/bert/')
+        fill_mask = pipeline('fill-mask', model=f'{args.model_dir}/custom/')
+        
         prediction = fill_mask('covid is a [MASK]')
         logger.info(prediction) 
 
-        prediction = fill_mask('Covid-19 is a [MASK]')
-        logger.info(prediction)
-
-        prediction = fill_mask('covid-19 is a [MASK]')
-        logger.info(prediction)
-
-        prediction = fill_mask('Covid is a [MASK]')
+        prediction = fill_mask('covid19 is a [MASK]')
         logger.info(prediction)
 
         prediction = fill_mask('Omicron [MASK] in US')
