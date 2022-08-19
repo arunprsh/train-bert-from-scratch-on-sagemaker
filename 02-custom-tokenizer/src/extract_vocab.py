@@ -17,9 +17,9 @@ logger.info(f'[Using Transformers: {transformers.__version__}]')
 logger.info(f'[Using Tokenizers: {tokenizers.__version__}]')
 
 # Essentials
-# is mapped to S3 input location for covid articles 
+# LOCAL_INPUT_PATH is mapped to S3 input location for covid articles 
 LOCAL_INPUT_PATH = '/opt/ml/processing/input' 
-# is mapped to S3 output location where we want to save the custom vocabulary from the trained tokenizer
+# LOCAL_OUTPUT_PATH is mapped to S3 output location where we want to save the custom vocabulary after training the tokenizer
 LOCAL_OUTPUT_PATH = '/opt/ml/processing/output'
 VOCAB_SIZE = 30522
 
