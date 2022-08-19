@@ -38,6 +38,27 @@ config = BertConfig()
 s3 = boto3.resource('s3')
 
 
+def tokenize(article):
+    tokenized_article = tokenizer(article['text'])
+    if tokenizer.is_fast:
+        tokenized_article['word_ids'] = [tokenized_article.word_ids(i) for i in range(len(tokenized_article['input_ids']))]
+    return tokenized_article
+
+
+def concat_and_chunk(articles):
+    # Concatenate all texts
+    concatenated_examples = {key: sum(articles[key], []) for key in articles.keys()}
+    # Compute length of concatenated texts
+    total_length = len(concatenated_examples[list(articles.keys())[0]])
+    # We drop the last chunk if it's smaller than chunk_size
+    total_length = (total_length//CHUNK_SIZE) * CHUNK_SIZE
+    # Split by chunks of max_len
+    chunked_articles = {key: [text[i : i+CHUNK_SIZE] for i in range(0, total_length, CHUNK_SIZE)] for key, text in concatenated_examples.items()}
+    # Create a new labels column
+    chunked_articles['labels'] = chunked_articles['input_ids'].copy()
+    return chunked_articles
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     logger.info('Parsing command line arguments')
@@ -102,31 +123,12 @@ if __name__ == '__main__':
     logger.info(f'Data splits: {data_splits}')
     
     # Tokenize dataset
-    def tokenize(article):
-        tokenized_article = tokenizer(article['text'])
-        if tokenizer.is_fast:
-            tokenized_article['word_ids'] = [tokenized_article.word_ids(i) for i in range(len(tokenized_article['input_ids']))]
-        return tokenized_article
-    
     logger.info('Tokenizing dataset splits')
     num_proc = int(os.cpu_count()/num_gpus)
     tokenized_datasets = data_splits.map(tokenize, batched=True, num_proc=num_proc, remove_columns=['text'])
     logger.info(f'Tokenized datasets: {tokenized_datasets}')
 
-    # Concat and chunk dataset
-    def concat_and_chunk(articles):
-        # Concatenate all texts
-        concatenated_examples = {key: sum(articles[key], []) for key in articles.keys()}
-        # Compute length of concatenated texts
-        total_length = len(concatenated_examples[list(articles.keys())[0]])
-        # We drop the last chunk if it's smaller than chunk_size
-        total_length = (total_length//CHUNK_SIZE) * CHUNK_SIZE
-        # Split by chunks of max_len
-        chunked_articles = {key: [text[i : i+CHUNK_SIZE] for i in range(0, total_length, CHUNK_SIZE)] for key, text in concatenated_examples.items()}
-        # Create a new labels column
-        chunked_articles['labels'] = chunked_articles['input_ids'].copy()
-        return chunked_articles
-    
+    # Concat and chunk dataset    
     logger.info('Concatenating and chunking the datasets to a fixed length')
     chunked_datasets = tokenized_datasets.map(concat_and_chunk, batched=True, num_proc=num_proc)
     
@@ -176,8 +178,8 @@ if __name__ == '__main__':
         shutil.copyfile(f'{args.input_dir}/vocab/vocab.txt', f'{args.model_dir}/custom/vocab.txt')
         
         # [IMPORTANT] Copy vocab.txt to saved model artifacts location in S3
-        logger.info(f'Copying custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
-        # TODO
+        logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
+        s3.meta.client.upload_file(f'{path}/vocab.txt', S3_BUCKET, 'model/custom/vocab.txt')
         
         # Evaluate the trained model 
         logger.info('Create fill-mask task pipeline to evaluate trained MLM')
