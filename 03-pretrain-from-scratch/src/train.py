@@ -51,6 +51,7 @@ if __name__ == '__main__':
     # are passed as command-line arguments to the training script
     parser.add_argument('--s3_bucket', type=str)
     parser.add_argument('--max_len', type=int)
+    parser.add_argument('--chunk_size', type=int)
     parser.add_argument('--num_train_epochs', type=int)
     parser.add_argument('--per_device_train_batch_size', type=int)
     args, _ = parser.parse_known_args()
@@ -62,6 +63,7 @@ if __name__ == '__main__':
     
     S3_BUCKET = args.s3_bucket
     MAX_LENGTH = args.max_len
+    CHUNK_SIZE = args.chunk_size
     TRAIN_EPOCHS = args.num_train_epochs
     BATCH_SIZE = args.per_device_train_batch_size
     SAVE_STEPS = 10000
@@ -100,13 +102,33 @@ if __name__ == '__main__':
     logger.info(f'Data splits: {data_splits}')
     
     # Tokenize dataset
-    def tokenize_function(examples):
-        return tokenizer(examples['text'], truncation=True, max_length=MAX_LENGTH)
+    def tokenize(article):
+        tokenized_article = tokenizer(article['text'])
+        if tokenizer.is_fast:
+            tokenized_article['word_ids'] = [tokenized_article.word_ids(i) for i in range(len(tokenized_article['input_ids']))]
+        return tokenized_article
     
     logger.info('Tokenizing dataset splits')
     num_proc = int(os.cpu_count()/num_gpus)
-    tokenized_dataset = data_splits.map(tokenize_function, batched=True, num_proc=num_proc, remove_columns=['text'])
-    logger.info(f'Tokenized dataset: {tokenized_dataset}')
+    tokenized_datasets = data_splits.map(tokenize, batched=True, num_proc=num_proc, remove_columns=['text'])
+    logger.info(f'Tokenized datasets: {tokenized_datasets}')
+
+    # Concat and chunk dataset
+    def concat_and_chunk(articles):
+        # Concatenate all texts
+        concatenated_examples = {key: sum(articles[key], []) for key in articles.keys()}
+        # Compute length of concatenated texts
+        total_length = len(concatenated_examples[list(articles.keys())[0]])
+        # We drop the last chunk if it's smaller than chunk_size
+        total_length = (total_length//CHUNK_SIZE) * CHUNK_SIZE
+        # Split by chunks of max_len
+        chunked_articles = {key: [text[i : i+CHUNK_SIZE] for i in range(0, total_length, CHUNK_SIZE)] for key, text in concatenated_examples.items()}
+        # Create a new labels column
+        chunked_articles['labels'] = chunked_articles['input_ids'].copy()
+        return chunked_articles
+    
+    logger.info('Concatenating and chunking the datasets to a fixed length')
+    chunked_datasets = tokenized_datasets.map(concat_and_chunk, batched=True, num_proc=num_proc)
     
     # Create data collator
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, 
@@ -130,8 +152,8 @@ if __name__ == '__main__':
     trainer = Trainer(model=mlm, 
                       args=training_args, 
                       data_collator=data_collator,
-                      train_dataset=tokenized_dataset['train'])
-                      eval_dataset=tokenized_dataset['validation'])
+                      train_dataset=chunked_datasets['train'],
+                      eval_dataset=chunked_datasets['validation'])
     trainer.train()
     
     eval_results = trainer.evaluate()
@@ -141,7 +163,7 @@ if __name__ == '__main__':
     if CURRENT_HOST == 'algo-1':
         # Save trained model to local model directory
         logger.info(f'Saving trained MLM to [{args.model_dir}/custom/]')
-        trainer.save_model(f'{args.model_dir}/custom/')
+        trainer.save_model(f'{args.model_dir}/custom')
         time.sleep(120)  # Wait for a few minutes to ensure the model is saved locally
     
         # Copy trained model from local directory of the training cluster to S3 
@@ -155,15 +177,16 @@ if __name__ == '__main__':
         
         # [IMPORTANT] Copy vocab.txt to saved model artifacts location in S3
         logger.info(f'Copying custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
-    
+        # TODO
+        
         # Evaluate the trained model 
         logger.info('Create fill-mask task pipeline to evaluate trained MLM')
-        fill_mask = pipeline('fill-mask', model=f'{args.model_dir}/custom/')
+        fill_mask = pipeline('fill-mask', model=f'{args.model_dir}/custom')
         
         prediction = fill_mask('covid is a [MASK]')
         logger.info(prediction) 
 
-        prediction = fill_mask('covid19 is a [MASK]')
+        prediction = fill_mask('Delta [MASK] is a [MASK]')
         logger.info(prediction)
 
         prediction = fill_mask('Omicron [MASK] in US')
