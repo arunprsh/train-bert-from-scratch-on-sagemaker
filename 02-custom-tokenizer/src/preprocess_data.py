@@ -1,6 +1,7 @@
 from transformers import BertTokenizerFast
 from transformers import BertConfig
 from datasets import load_dataset
+from datasets import DatasetDict
 from pathlib import Path
 import transformers 
 import datasets
@@ -25,6 +26,7 @@ LOCAL_INPUT_PATH = '/opt/ml/processing/input'
 LOCAL_OUTPUT_PATH = '/opt/ml/processing/output'
 MAX_LENGTH = 512
 CHUNK_SIZE = 128
+N_GPUS = 1
 
 # Re-create BERT WordPiece tokenizer using the saved custom vocabulary from the previous job
 config = BertConfig()
@@ -56,7 +58,8 @@ def tokenize(article):
 
 
 logger.info('Tokenizing dataset splits')
-num_proc = int(os.cpu_count()/num_gpus)
+num_proc = int(os.cpu_count()/N_GPUS)
+logger.info(f'Total number of processes = {num_proc}')
 tokenized_datasets = data_splits.map(tokenize, batched=True, num_proc=num_proc, remove_columns=['text'])
 logger.info(f'Tokenized datasets: {tokenized_datasets}')
 
@@ -81,7 +84,7 @@ logger.info(f'Chunked datasets: {chunked_datasets}')
 
 # Save chunked datasets to local disk (EBS volume)
 logger.info(f'Saving chunked datasets to local disk {LOCAL_OUTPUT_PATH}')
-dataset.save_to_disk(f'{LOCAL_OUTPUT_PATH}')
+chunked_datasets.save_to_disk(f'{LOCAL_OUTPUT_PATH}')
 
 # Validate if datasets were saved correctly
 logger.info('Validating if datasets were saved correctly')

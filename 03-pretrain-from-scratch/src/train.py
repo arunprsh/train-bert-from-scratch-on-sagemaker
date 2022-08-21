@@ -112,6 +112,7 @@ if __name__ == '__main__':
     
     logger.info('Tokenizing dataset splits')
     num_proc = int(os.cpu_count()/num_gpus)
+    logger.info(f'Total number of processes = {num_proc}')
     tokenized_datasets = data_splits.map(tokenize, batched=True, num_proc=num_proc, remove_columns=['text'])
     logger.info(f'Tokenized datasets: {tokenized_datasets}')
 
