@@ -66,61 +66,6 @@ if __name__ == '__main__':
     
     
     
-    # Load dataset
-    # Read dataset and collate to create the mini batches for MLM fine-tuning 
-    dataset = LineByLineTextDataset(tokenizer=tokenizer, 
-                                    file_path=f'{args.training_dir}/articles.txt', 
-                                    block_size=128)
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=0.15)
-    
-    mlm = BertForMaskedLM(config=config)
-    
-    # Train Masked Language Model (MLM)
-    training_args = TrainingArguments(output_dir="./covidBERT", 
-                                      overwrite_output_dir=True, 
-                                      num_train_epochs=4, 
-                                      per_device_train_batch_size=32, 
-                                      save_steps=10_000, 
-                                      save_total_limit=2)
-    trainer = Trainer(model=mlm, 
-                      args=training_args, 
-                      data_collator=data_collator, 
-                      train_dataset=dataset)
-    trainer.train()
-    
-    if CURRENT_HOST == 'algo-1':
-    
-        # Save trained model to local model directory
-        trainer.save_model(f'{args.model_dir}/bert/')
-        time.sleep(120)
-        print(os.listdir(f'{args.model_dir}/bert/'))
-
-        # Copy trained model from local directory of the training cluster to S3 
-        s3 = boto3.resource('s3')
-        s3.meta.client.upload_file(f'{args.model_dir}/bert/pytorch_model.bin', 'sagemaker-us-east-1-119174016168', 'model2/' + 'pytorch_model.bin')
-        s3.meta.client.upload_file(f'{args.model_dir}/bert/config.json', 'sagemaker-us-east-1-119174016168', 'model2/' + 'config.json')
-
-        # [IMPORTANT] Copy vocab.txt to local model directory - this is needed to re-create the trained model
-        shutil.copyfile(f'{args.input_dir}/vocab2/vocab.txt', f'{args.model_dir}/bert/vocab.txt')
-    
-    
-        # Evaluate the trained model 
-        logger.info('Create fill-mask task pipeline to evaluate trained MLM')
-        fill_mask = pipeline('fill-mask', model=f'{args.model_dir}/bert/')
-        prediction = fill_mask('covid is a [MASK]')
-        logger.info(prediction) 
-
-        prediction = fill_mask('Covid-19 is a [MASK]')
-        logger.info(prediction)
-
-        prediction = fill_mask('covid-19 is a [MASK]')
-        logger.info(prediction)
-
-        prediction = fill_mask('Covid is a [MASK]')
-        logger.info(prediction)
-
-        prediction = fill_mask('Omicron [MASK] in US')
-        logger.info(prediction)  
 
     
     
