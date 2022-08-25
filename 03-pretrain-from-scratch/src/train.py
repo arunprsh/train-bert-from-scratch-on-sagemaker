@@ -8,6 +8,7 @@ from datasets import load_dataset
 from transformers import Trainer
 from datasets import DatasetDict
 from pathlib import Path
+import pandas as pd
 import transformers
 import sagemaker
 import datasets
@@ -17,6 +18,7 @@ import random
 import shutil
 import torch
 import boto3
+import json
 import time
 import math
 import sys
@@ -33,6 +35,7 @@ logger.info(f'[Using Transformers: {transformers.__version__}]')
 logger.info(f'[Using SageMaker: {sagemaker.__version__}]')
 logger.info(f'[Using Datasets: {datasets.__version__}]')
 logger.info(f'[Using Torch: {torch.__version__}]')
+logger.info(f'[Using Pandas: {pd.__version__}]')
 
 # Essentials 
 config = BertConfig()
@@ -47,7 +50,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_dir', type=str, default=os.environ['SM_MODEL_DIR'])
     parser.add_argument('--train', type=str, default=os.environ['SM_CHANNEL_TRAIN'])
     parser.add_argument('--current_host', type=str, default=os.environ['SM_CURRENT_HOST'])
-    parser.add_argument('--num_gpus', type=int, default=os.environ['SM_NUM_GPUS'])
+    parser.add_argument('--master_host', type=str, default=os.environ['SMDATAPARALLEL_SERVER_ADDR'])
     
     # [IMPORTANT] Hyperparameters sent by the client (Studio notebook with the driver code to launch training) 
     # are passed as command-line arguments to the training script
@@ -56,12 +59,13 @@ if __name__ == '__main__':
     parser.add_argument('--chunk_size', type=int)
     parser.add_argument('--num_train_epochs', type=int)
     parser.add_argument('--per_device_train_batch_size', type=int)
-    args, _ = parser.parse_known_args()
     
-    CURRENT_HOST = args.current_host
-    logger.info(f'Current host = {CURRENT_HOST}')
-    num_gpus = args.num_gpus
-    logger.info(f'Total number of GPUs per node = {num_gpus}')
+    args, _ = parser.parse_known_args()
+    current_host = args.current_host
+    master_host = args.master_host
+    
+    logger.info(f'Current host = {current_host}')
+    logger.info(f'Master host = {master_host}')
     
     S3_BUCKET = args.s3_bucket
     MAX_LENGTH = args.max_len
@@ -164,34 +168,38 @@ if __name__ == '__main__':
     logger.info(f"Perplexity: {math.exp(eval_results['eval_loss']):.2f}")
     
     
-    if CURRENT_HOST == 'algo-1':
+    if current_host == master_host:
+        if not os.path.exists('/tmp/cache/model/custom'):
+            os.makedirs('/tmp/cache/model/custom', exist_ok=True)
+
         # Save trained model to local model directory
-        logger.info(f'Saving trained MLM to [{args.model_dir}/custom/]')
-        trainer.save_model(f'{args.model_dir}/custom')
-        time.sleep(120)  # Wait for a few minutes to ensure the model is saved locally
-    
-        # Copy trained model from local directory of the training cluster to S3 
-        logger.info(f'Copying saved model from local to [{S3_BUCKET}/model/custom/]')
-        s3.meta.client.upload_file(f'{args.model_dir}/custom/pytorch_model.bin', S3_BUCKET, 'model/custom/pytorch_model.bin')
-        s3.meta.client.upload_file(f'{args.model_dir}/custom/config.json', S3_BUCKET, 'model/custom/config.json')
-
-        # [IMPORTANT] Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
-        logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
-        shutil.copyfile(f'{args.input_dir}/vocab/vocab.txt', f'{args.model_dir}/custom/vocab.txt')
+        logger.info(f'Saving trained MLM to [/tmp/cache/model/custom/]')
+        trainer.save_model('/tmp/cache/model/custom')
         
-        # [IMPORTANT] Copy vocab.txt to saved model artifacts location in S3
-        logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
-        s3.meta.client.upload_file(f'{path}/vocab.txt', S3_BUCKET, 'model/custom/vocab.txt')
-        
-        # Evaluate the trained model 
-        logger.info('Create fill-mask task pipeline to evaluate trained MLM')
-        fill_mask = pipeline('fill-mask', model=f'{args.model_dir}/custom')
-        
-        prediction = fill_mask('covid is a [MASK]')
-        logger.info(prediction) 
+        logger.info(os.listdir('/tmp/cache/model/custom'))
+        if os.path.exists('/tmp/cache/model/custom/pytorch_model.bin') and os.path.exists('/tmp/cache/model/custom/config.json'):
+            # Copy trained model from local directory of the training cluster to S3 
+            logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/custom/]')
+            s3.meta.client.upload_file('/tmp/cache/model/custom/pytorch_model.bin', S3_BUCKET, 'model/custom/pytorch_model.bin')
+            s3.meta.client.upload_file('/tmp/cache/model/custom/config.json', S3_BUCKET, 'model/custom/config.json')
 
-        prediction = fill_mask('Delta [MASK] is a [MASK]')
-        logger.info(prediction)
+            # Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
+            logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
+            shutil.copyfile(f'{args.input_dir}/vocab/vocab.txt', '/tmp/cache/model/custom/vocab.txt')
 
-        prediction = fill_mask('Omicron [MASK] in US')
-        logger.info(prediction)  
+            # Copy vocab.txt to saved model artifacts location in S3
+            logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
+            s3.meta.client.upload_file(f'{path}/vocab.txt', S3_BUCKET, 'model/custom/vocab.txt')
+
+            # Evaluate the trained model 
+            logger.info('Create fill-mask task pipeline to evaluate trained MLM')
+            fill_mask = pipeline('fill-mask', model='/tmp/cache/model/custom')
+            df = pd.read_csv(f's3://{S3_BUCKET}/data/eval/eval_mlm.csv')
+
+            for gt, masked_sentence in zip(df.ground_truth.tolist(), df.masked.tolist()):
+                logger.info(f'Ground Truth    : {gt}')
+                logger.info(f'Masked sentence : {masked_sentence}')
+                predictions = fill_mask(masked_sentence, top_k=3)
+                for i, prediction in enumerate(predictions):
+                    logger.info(f'Rank: {i+1} | {(prediction["score"] * 100):.2f} % | {[prediction["token_str"]]}')
+            logger.info('-' * 10)
