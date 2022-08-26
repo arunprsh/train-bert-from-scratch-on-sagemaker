@@ -76,7 +76,7 @@ if __name__ == '__main__':
     SAVE_TOTAL_LIMIT = 2
     
     # Download saved custom vocabulary file from S3 to local input path of the training cluster
-    logger.info(f'Downloading custom vocabulary from [{S3_BUCKET}/vocab/] to [{args.input_dir}/vocab/]')
+    logger.info(f'Downloading custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{args.input_dir}/vocab/]')
     bucket = s3.Bucket(S3_BUCKET)
     path = os.path.join(f'{args.input_dir}', 'vocab')
     
@@ -84,7 +84,7 @@ if __name__ == '__main__':
         os.makedirs(path, exist_ok=True)
 
     with open(f'{path}/vocab.txt', 'wb') as data:
-        bucket.download_fileobj('vocab/vocab.txt', data)
+        bucket.download_fileobj('data/vocab/vocab.txt', data)
         
     # Copy preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
@@ -176,7 +176,6 @@ if __name__ == '__main__':
         logger.info(f'Saving trained MLM to [/tmp/cache/model/custom/]')
         trainer.save_model('/tmp/cache/model/custom')
         
-        logger.info(os.listdir('/tmp/cache/model/custom'))
         if os.path.exists('/tmp/cache/model/custom/pytorch_model.bin') and os.path.exists('/tmp/cache/model/custom/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/custom/]')
@@ -185,7 +184,7 @@ if __name__ == '__main__':
 
             # Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
             logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
-            shutil.copyfile(f'{args.input_dir}/vocab/vocab.txt', '/tmp/cache/model/custom/vocab.txt')
+            shutil.copyfile(f'{path}/vocab.txt', '/tmp/cache/model/custom/vocab.txt')
 
             # Copy vocab.txt to saved model artifacts location in S3
             logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/custom/] for future stages of ML pipeline')

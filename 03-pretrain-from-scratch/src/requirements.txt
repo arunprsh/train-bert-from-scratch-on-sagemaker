@@ -1,1 +1,5 @@
+torch==1.10.2+cu113
+transformers==4.17.0
 datasets==2.4.0
+sagemaker==2.100.0
+pandas==1.4.3
