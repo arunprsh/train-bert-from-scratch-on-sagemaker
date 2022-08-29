@@ -134,7 +134,7 @@ if __name__ == '__main__':
     logger.info(f'Tokenizer: {tokenizer}')
 
     # Read dataset 
-    chunked_datasets = datasets.load_from_disk('/tmp/cache/data/processed')
+    chunked_datasets = datasets.load_from_disk('/tmp/cache/data/bert/processed')
     logger.info(f'Chunked datasets: {chunked_datasets}')
     
    
