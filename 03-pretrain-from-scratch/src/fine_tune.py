@@ -87,7 +87,7 @@ if __name__ == '__main__':
         bucket.download_fileobj('data/bert/vocab/vocab.txt', file_)
         
     # Copy preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/bert/processed/] to [/tmp/cache/data/bert/processed/]')
     def get_bucket_content(bucket, prefix=''):
         files = []
         folders = []
@@ -108,7 +108,7 @@ if __name__ == '__main__':
             next_token = response.get('NextContinuationToken')
         return files, folders
     
-    files, folders = get_bucket_content(S3_BUCKET, 'data/processed/')
+    files, folders = get_bucket_content(S3_BUCKET, 'data/bert/processed/')
     
     
     def copy_to_local_from_s3(bucket: str, local_path: str, files: list, folders: list) -> None:
@@ -162,10 +162,14 @@ if __name__ == '__main__':
                       data_collator=data_collator,
                       train_dataset=chunked_datasets['train'],
                       eval_dataset=chunked_datasets['validation'])
+    
+    eval_results = trainer.evaluate()
+    logger.info(f"Perplexity before training: {math.exp(eval_results['eval_loss']):.2f}")
+    
     trainer.train()
     
     eval_results = trainer.evaluate()
-    logger.info(f"Perplexity: {math.exp(eval_results['eval_loss']):.2f}")
+    logger.info(f"Perplexity after training: {math.exp(eval_results['eval_loss']):.2f}")
     
     
     if current_host == master_host:

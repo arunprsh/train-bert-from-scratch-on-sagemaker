@@ -162,10 +162,14 @@ if __name__ == '__main__':
                       data_collator=data_collator,
                       train_dataset=chunked_datasets['train'],
                       eval_dataset=chunked_datasets['validation'])
+    
+    eval_results = trainer.evaluate()
+    logger.info(f"Perplexity before training: {math.exp(eval_results['eval_loss']):.2f}")
+    
     trainer.train()
     
     eval_results = trainer.evaluate()
-    logger.info(f"Perplexity: {math.exp(eval_results['eval_loss']):.2f}")
+    logger.info(f"Perplexity after training: {math.exp(eval_results['eval_loss']):.2f}")
     
     
     if current_host == master_host:
