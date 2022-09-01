@@ -1,5 +1,4 @@
 from transformers import BertTokenizerFast
-from transformers import BertConfig
 from datasets import load_dataset
 from datasets import DatasetDict
 from pathlib import Path
@@ -28,12 +27,8 @@ MAX_LENGTH = 512
 CHUNK_SIZE = 128
 N_GPUS = 1
 
-# Re-create BERT WordPiece tokenizer using the saved custom vocabulary from the previous job
-config = BertConfig()
-logger.info(f'Re-creating BERT tokenizer using out of the box vocabulary from [{LOCAL_INPUT_PATH}/vocab/]')
-tokenizer = BertTokenizerFast.from_pretrained(f'{LOCAL_INPUT_PATH}/vocab', config=config)
-tokenizer.model_max_length = MAX_LENGTH
-tokenizer.init_kwargs['model_max_length'] = MAX_LENGTH
+#logger.info(f'Re-creating BERT tokenizer using out of the box vocabulary from [{LOCAL_INPUT_PATH}/vocab/]')
+tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
 logger.info(f'Tokenizer: {tokenizer}')
 
 # Read dataset and collate to create the mini batches for Masked Language Model (MLM) training

@@ -202,7 +202,7 @@ if __name__ == '__main__':
             for gt, masked_sentence in zip(df.ground_truth.tolist(), df.masked.tolist()):
                 logger.info(f'Ground Truth    : {gt}')
                 logger.info(f'Masked sentence : {masked_sentence}')
-                predictions = fill_mask(masked_sentence, top_k=3)
+                predictions = fill_mask(masked_sentence, top_k=10)
                 for i, prediction in enumerate(predictions):
                     logger.info(f'Rank: {i+1} | {(prediction["score"] * 100):.2f} % | {[prediction["token_str"]]}')
             logger.info('-' * 10)

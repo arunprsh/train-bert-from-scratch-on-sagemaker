@@ -2,7 +2,6 @@ from transformers import DataCollatorForLanguageModeling
 from transformers import TrainingArguments
 from transformers import BertTokenizerFast
 from transformers import BertForMaskedLM
-from transformers import BertConfig
 from transformers import pipeline 
 from datasets import load_dataset
 from transformers import Trainer
@@ -38,7 +37,6 @@ logger.info(f'[Using Torch: {torch.__version__}]')
 logger.info(f'[Using Pandas: {pd.__version__}]')
 
 # Essentials 
-config = BertConfig()
 s3 = boto3.resource('s3')
 s3_client = boto3.client('s3')
 
@@ -128,9 +126,7 @@ if __name__ == '__main__':
     
     # Re-create BERT WordPiece tokenizer 
     logger.info(f'Re-creating BERT tokenizer using custom vocabulary from [{args.input_dir}/vocab/]')
-    tokenizer = BertTokenizerFast.from_pretrained(f'{args.input_dir}/vocab/', config=config)
-    tokenizer.model_max_length = MAX_LENGTH
-    tokenizer.init_kwargs['model_max_length'] = MAX_LENGTH
+    tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
     logger.info(f'Tokenizer: {tokenizer}')
 
     # Read dataset 
@@ -145,7 +141,7 @@ if __name__ == '__main__':
         
     # Load MLM
     logger.info('Loading BertForMaskedLM model')
-    mlm = BertForMaskedLM(config=config)
+    mlm = BertForMaskedLM.from_pretrained('bert-base-uncased')
     
     # Train MLM
     logger.info('Training MLM')
@@ -187,22 +183,22 @@ if __name__ == '__main__':
             s3.meta.client.upload_file('/tmp/cache/model/finetuned/config.json', S3_BUCKET, 'model/finetuned/config.json')
 
             # Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
-            logger.info('Copying BERT vocabulary to local model artifacts location (EBS) to faciliate model evaluation')
-            shutil.copyfile(f'{args.input_dir}/vocab/vocab.txt', '/tmp/cache/model/finetuned/vocab.txt')
+            #logger.info('Copying BERT vocabulary to local model artifacts location (EBS) to faciliate model evaluation')
+            #shutil.copyfile(f'{args.input_dir}/vocab/vocab.txt', '/tmp/cache/model/finetuned/vocab.txt')
 
             # Copy vocab.txt to saved model artifacts location in S3
-            logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/finetuned/] for future stages of ML pipeline')
-            s3.meta.client.upload_file(f'{path}/vocab.txt', S3_BUCKET, 'model/finetuned/vocab.txt')
+            #logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/finetuned/] for future stages of ML pipeline')
+            #s3.meta.client.upload_file(f'{path}/vocab.txt', S3_BUCKET, 'model/finetuned/vocab.txt')
 
             # Evaluate the trained model 
             logger.info('Create fill-mask task pipeline to evaluate trained MLM')
-            fill_mask = pipeline('fill-mask', model='/tmp/cache/model/finetuned')
+            fill_mask = pipeline('fill-mask', model='/tmp/cache/model/finetuned', tokenizer=tokenizer)
             df = pd.read_csv(f's3://{S3_BUCKET}/data/eval/eval_mlm.csv')
 
             for gt, masked_sentence in zip(df.ground_truth.tolist(), df.masked.tolist()):
                 logger.info(f'Ground Truth    : {gt}')
                 logger.info(f'Masked sentence : {masked_sentence}')
-                predictions = fill_mask(masked_sentence, top_k=3)
+                predictions = fill_mask(masked_sentence, top_k=10)
                 for i, prediction in enumerate(predictions):
                     logger.info(f'Rank: {i+1} | {(prediction["score"] * 100):.2f} % | {[prediction["token_str"]]}')
             logger.info('-' * 10)

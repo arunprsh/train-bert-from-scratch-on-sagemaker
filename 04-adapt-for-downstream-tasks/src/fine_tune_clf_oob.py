@@ -36,7 +36,7 @@ logger.info(f'[Using Torch: {torch.__version__}]')
 
 
 if __name__ == '__main__':
-    # [IMPORTANT] Hyperparameters sent by the client (Studio notebook with the driver code to launch training)
+    # Hyperparameters sent by the client (Studio notebook with the driver code to launch training)
     # are passed as command-line arguments to the training script
     parser = argparse.ArgumentParser()
     logger.info('Handling command line arguments')
