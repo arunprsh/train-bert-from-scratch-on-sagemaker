@@ -44,7 +44,6 @@ if __name__ == '__main__':
     # are passed as command-line arguments to the training script
     parser.add_argument('--s3_bucket', type=str)
     parser.add_argument('--max_len', type=int)
-    parser.add_argument('--chunk_size', type=int)
     parser.add_argument('--num_train_epochs', type=int)
     parser.add_argument('--per_device_train_batch_size', type=int)
     
@@ -57,7 +56,6 @@ if __name__ == '__main__':
     
     S3_BUCKET = args.s3_bucket
     MAX_LENGTH = args.max_len
-    CHUNK_SIZE = args.chunk_size
     TRAIN_EPOCHS = args.num_train_epochs
     BATCH_SIZE = args.per_device_train_batch_size
     SAVE_STEPS = 10000
