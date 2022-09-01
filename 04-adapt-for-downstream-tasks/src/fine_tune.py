@@ -1,7 +1,18 @@
+from sklearn.metrics import precision_recall_fscore_support
+from transformers import BertForSequenceClassification
+from sklearn.metrics import accuracy_score
+from transformers import TrainingArguments
+from transformers import BertTokenizerFast
+from transformers import pipeline
+from transformers import Trainer
+from datasets import load_dataset
+from datasets import DatasetDict
 import pandas as pd
 import transformers
+import numpy as np
 import datasets
 import logging 
+import pickle
 import torch
 
 
@@ -15,8 +26,9 @@ logging.basicConfig(level=logging.getLevelName('INFO'),
 logger.info(f'[Using Transformers: {transformers.__version__}]')
 logger.info(f'[Using SageMaker: {sagemaker.__version__}]')
 logger.info(f'[Using Datasets: {datasets.__version__}]')
+logger.info(f'[Using Sklearn: {sklearn.__version__}]')
 logger.info(f'[Using Torch: {torch.__version__}]')
-logger.info(f'[Using Pandas: {pd.__version}]')
+logger.info(f'[Using Pandas: {pd.__version__}]')
 
 
 if __name__ == '__main__':
@@ -62,12 +74,7 @@ if __name__ == '__main__':
     
     
     # Evaluate 
-    def compute_metrics(pred):
-        labels = pred.label_ids
-        preds = pred.predictions.argmax(-1)
-        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='micro')
-        acc = accuracy_score(labels, preds)
-        return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall}
-    
     
     # Save model 
+    
+    # Test model for inference
