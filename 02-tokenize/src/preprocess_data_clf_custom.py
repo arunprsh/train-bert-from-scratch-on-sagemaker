@@ -31,6 +31,7 @@ logger.info(f'[Using Pandas: {pd.__version__}]')
 LOCAL_INPUT_PATH = '/opt/ml/processing/input' 
 # LOCAL_OUTPUT_PATH is mapped to S3 output location where we want to save the processed input data (COVID article headlines)
 LOCAL_OUTPUT_PATH = '/opt/ml/processing/output'
+MAX_LENGTH = 512
 N_GPUS = 1
 
 # Initiatize BERT custom tokenizer
