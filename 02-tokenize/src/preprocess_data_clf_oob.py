@@ -1,6 +1,3 @@
-from sklearn.metrics import precision_recall_fscore_support
-from transformers import BertForSequenceClassification
-from sklearn.metrics import accuracy_score
 from transformers import TrainingArguments
 from transformers import BertTokenizerFast
 from transformers import pipeline
@@ -22,15 +19,14 @@ logging.basicConfig(level=logging.getLevelName('INFO'),
 # Log versions of dependencies
 logger.info(f'[Using Transformers: {transformers.__version__}]')
 logger.info(f'[Using Datasets: {datasets.__version__}]')
-logger.info(f'[Using Sklearn: {sklearn.__version__}]')
 logger.info(f'[Using Pandas: {pd.__version__}]')
-
 
 # Essentials
 # LOCAL_INPUT_PATH is mapped to S3 input location for covid article headlines 
 LOCAL_INPUT_PATH = '/opt/ml/processing/input' 
 # LOCAL_OUTPUT_PATH is mapped to S3 output location where we want to save the processed input data (COVID article headlines)
 LOCAL_OUTPUT_PATH = '/opt/ml/processing/output'
+MAX_LENGTH = 512
 N_GPUS = 1
 
 # Initiatize BERT default tokenizer
