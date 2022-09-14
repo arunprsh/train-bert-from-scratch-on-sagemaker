@@ -9,6 +9,7 @@ import logging
 import sys
 import os
 
+
 # Setup logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.getLevelName('INFO'), 
@@ -20,7 +21,7 @@ logger.info(f'[Using Transformers: {transformers.__version__}]')
 logger.info(f'[Using Datasets: {datasets.__version__}]')
 
 # Essentials
-# LOCAL_INPUT_PATH is mapped to S3 input location for covid articles 
+# LOCAL_INPUT_PATH is mapped to S3 input location for covid news articles 
 LOCAL_INPUT_PATH = '/opt/ml/processing/input' 
 # LOCAL_OUTPUT_PATH is mapped to S3 output location where we want to save the processed input data (COVID articles)
 LOCAL_OUTPUT_PATH = '/opt/ml/processing/output'
@@ -36,7 +37,7 @@ tokenizer.model_max_length = MAX_LENGTH
 tokenizer.init_kwargs['model_max_length'] = MAX_LENGTH
 logger.info(f'Tokenizer: {tokenizer}')
 
-# Read dataset and collate to create the mini batches for Masked Language Model (MLM) training
+# Read dataset and collate to create mini batches for Masked Language Model (MLM) training
 logger.info('Reading and collating input data to create mini batches for Masked Language Model (MLM) training')
 dataset = load_dataset('text', data_files=f'{LOCAL_INPUT_PATH}/data/covid_articles.txt', split='train', cache_dir='/tmp/cache')
 logger.info(f'Dataset: {dataset}')
