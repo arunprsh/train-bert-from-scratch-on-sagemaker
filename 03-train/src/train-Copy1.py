@@ -2,9 +2,7 @@ from transformers import DataCollatorForLanguageModeling
 from transformers import TrainingArguments
 from transformers import BertTokenizerFast
 from transformers import BertForMaskedLM
-from sagemaker.s3 import S3Downloader
 from transformers import BertConfig
-from sagemaker.s3 import S3Uploader
 from transformers import pipeline 
 from datasets import load_dataset
 from transformers import Trainer
@@ -82,11 +80,52 @@ if __name__ == '__main__':
     logger.info(f'Downloading custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{args.input_dir}/vocab/]')
     bucket = s3.Bucket(S3_BUCKET)
     path = os.path.join(f'{args.input_dir}', 'vocab')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/vocab/vocab.txt', f'{path}/vocab.txt')    
-         
-    # Download preprocessed datasets from S3 to local EBS volume (cache dir)
+    
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+
+    with open(f'{path}/vocab.txt', 'wb') as data:
+        bucket.download_fileobj('data/vocab/vocab.txt', data)
+        
+    # Copy preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/processed', '/tmp/cache/data/processed')
+    def get_bucket_content(bucket, prefix=''):
+        files = []
+        folders = []
+        default_kwargs = {'Bucket': bucket, 'Prefix': prefix}
+        next_token = ''
+        while next_token is not None:
+            updated_kwargs = default_kwargs.copy()
+            if next_token != '':
+                updated_kwargs['ContinuationToken'] = next_token
+            response = s3_client.list_objects_v2(**default_kwargs)
+            contents = response.get('Contents')
+            for result in contents:
+                key = result.get('Key')
+                if key[-1] == '/':
+                    folders.append(key)
+                else:
+                    files.append(key)
+            next_token = response.get('NextContinuationToken')
+        return files, folders
+    
+    files, folders = get_bucket_content(S3_BUCKET, 'data/processed/')
+    
+    
+    def copy_to_local_from_s3(bucket: str, local_path: str, files: list, folders: list) -> None:
+        local_path = Path(local_path)
+        for folder in folders:
+            folder_path = Path.joinpath(local_path, folder)
+            folder_path.mkdir(parents=True, exist_ok=True)
+
+        for file_name in files:
+            file_path = Path.joinpath(local_path, file_name)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            s3_client.download_file(bucket, file_name, str(file_path))
+
+
+    copy_to_local_from_s3(S3_BUCKET, '/tmp/cache', files, folders)
+    
     
     # Re-create BERT WordPiece tokenizer 
     logger.info(f'Re-creating BERT tokenizer using custom vocabulary from [{args.input_dir}/vocab/]')
@@ -135,33 +174,36 @@ if __name__ == '__main__':
     
     
     if current_host == master_host:
+        if not os.path.exists('/tmp/cache/model/custom'):
+            os.makedirs('/tmp/cache/model/custom', exist_ok=True)
+
         # Save trained model to local model directory
         logger.info(f'Saving trained MLM to [/tmp/cache/model/custom/]')
         trainer.save_model('/tmp/cache/model/custom')
         
+        if os.path.exists('/tmp/cache/model/custom/pytorch_model.bin') and os.path.exists('/tmp/cache/model/custom/config.json'):
+            # Copy trained model from local directory of the training cluster to S3 
+            logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/custom/]')
+            s3.meta.client.upload_file('/tmp/cache/model/custom/pytorch_model.bin', S3_BUCKET, 'model/custom/pytorch_model.bin')
+            s3.meta.client.upload_file('/tmp/cache/model/custom/config.json', S3_BUCKET, 'model/custom/config.json')
 
-        # Copy trained model from local directory of the training cluster to S3 
-        logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/custom/]')
-        S3Uploader.upload('/tmp/cache/model/custom/pytorch_model.bin', f's3://{S3_BUCKET}/model/custom/pytorch_model.bin')
-        S3Uploader.upload('/tmp/cache/model/custom/config.json', f's3://{S3_BUCKET}/model/custom/config.json')
+            # Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
+            logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
+            shutil.copyfile(f'{path}/vocab.txt', '/tmp/cache/model/custom/vocab.txt')
 
-        # Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
-        logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
-        shutil.copyfile(f'{path}/vocab.txt', '/tmp/cache/model/custom/vocab.txt')
+            # Copy vocab.txt to saved model artifacts location in S3
+            logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
+            s3.meta.client.upload_file(f'{path}/vocab.txt', S3_BUCKET, 'model/custom/vocab.txt')
 
-        # Copy vocab.txt to saved model artifacts location in S3
-        logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
-        S3Uploader.upload(f'{path}/vocab.txt', f's3://{S3_BUCKET}/model/custom/vocab.txt')
+            # Evaluate the trained model 
+            logger.info('Create fill-mask task pipeline to evaluate trained MLM')
+            fill_mask = pipeline('fill-mask', model='/tmp/cache/model/custom')
+            df = pd.read_csv(f's3://{S3_BUCKET}/data/eval/eval_mlm.csv')
 
-        # Evaluate the trained model 
-        logger.info('Create fill-mask task pipeline to evaluate trained MLM')
-        fill_mask = pipeline('fill-mask', model='/tmp/cache/model/custom')
-        df = pd.read_csv(f's3://{S3_BUCKET}/data/eval/eval_mlm.csv')
-
-        for gt, masked_sentence in zip(df.ground_truth.tolist(), df.masked.tolist()):
-            logger.info(f'Ground Truth    : {gt}')
-            logger.info(f'Masked sentence : {masked_sentence}')
-            predictions = fill_mask(masked_sentence, top_k=10)
-            for i, prediction in enumerate(predictions):
-                logger.info(f'Rank: {i+1} | {(prediction["score"] * 100):.2f} % | {[prediction["token_str"]]}')
+            for gt, masked_sentence in zip(df.ground_truth.tolist(), df.masked.tolist()):
+                logger.info(f'Ground Truth    : {gt}')
+                logger.info(f'Masked sentence : {masked_sentence}')
+                predictions = fill_mask(masked_sentence, top_k=10)
+                for i, prediction in enumerate(predictions):
+                    logger.info(f'Rank: {i+1} | {(prediction["score"] * 100):.2f} % | {[prediction["token_str"]]}')
             logger.info('-' * 10)
