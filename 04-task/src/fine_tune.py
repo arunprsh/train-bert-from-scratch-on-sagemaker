@@ -112,6 +112,15 @@ if __name__ == '__main__':
     # Save model 
     trainer.save_model(f'{args.model_dir}/fine-tuned/')
     
+     # Copy trained model from local directory of the training cluster to S3 
+    s3 = boto3.resource('s3')
+    s3.meta.client.upload_file(f'{args.model_dir}/fine-tuned/pytorch_model.bin', 
+                               'sagemaker-us-east-1-119174016168', 
+                               'model/fine-tuned-clf' + 'pytorch_model.bin')
+    s3.meta.client.upload_file(f'{args.model_dir}/fine-tuned/config.json', 
+                               'sagemaker-us-east-1-119174016168', 
+                               'model/fine-tuned-clf' + 'config.json')
+    
     # Test model for inference
     classifier = pipeline('sentiment-analysis', model=f'{args.model_dir}/fine-tuned/')
     prediction = classifier('I hate you')
