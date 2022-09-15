@@ -85,9 +85,7 @@ if __name__ == '__main__':
     path = os.path.join(f'{args.input_dir}', 'vocab')
     logger.info(f'Path: {path}')
     
-    S3Downloader.download(f's3://{S3_BUCKET}/data/vocab/', f'{path}/vocab/', sagemaker_session=sm_session)
-    logger.info(os.listdir(f'{args.input_dir}/'))
-    logger.info(os.listdir(f'{args.input_dir}/vocab/'))
+    S3Downloader.download(f's3://{S3_BUCKET}/data/vocab/', f'{path}/', sagemaker_session=sm_session)
          
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
@@ -97,7 +95,7 @@ if __name__ == '__main__':
     
     # Re-create BERT WordPiece tokenizer 
     logger.info(f'Re-creating BERT tokenizer using custom vocabulary from [{args.input_dir}/vocab/]')
-    tokenizer = BertTokenizerFast.from_pretrained(f'{args.input_dir}/vocab', config=config)
+    tokenizer = BertTokenizerFast.from_pretrained(path, config=config)
     tokenizer.model_max_length = MAX_LENGTH
     tokenizer.init_kwargs['model_max_length'] = MAX_LENGTH
     logger.info(f'Tokenizer: {tokenizer}')
@@ -156,7 +154,7 @@ if __name__ == '__main__':
 
         # Copy vocab.txt to saved model artifacts location in S3
         logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
-        S3Uploader.upload(f'{path}/vocab/', f's3://{S3_BUCKET}/model/custom/', sagemaker_session=sm_session)
+        S3Uploader.upload(f'{path}/', f's3://{S3_BUCKET}/model/custom/', sagemaker_session=sm_session)
 
         # Evaluate the trained model 
         logger.info('Create fill-mask task pipeline to evaluate trained MLM')
