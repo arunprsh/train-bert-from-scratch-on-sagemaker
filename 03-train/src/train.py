@@ -7,8 +7,8 @@ from transformers import BertConfig
 from sagemaker.s3 import S3Uploader
 from transformers import pipeline 
 from datasets import load_dataset
-from transformers import Trainer
 from datasets import DatasetDict
+from transformers import Trainer
 from pathlib import Path
 import pandas as pd
 import transformers
@@ -38,12 +38,14 @@ logger.info(f'[Using Transformers: {transformers.__version__}]')
 logger.info(f'[Using SageMaker: {sagemaker.__version__}]')
 logger.info(f'[Using Datasets: {datasets.__version__}]')
 logger.info(f'[Using Torch: {torch.__version__}]')
+logger.info(f'[Using Boto3: {boto3.__version__}]')
 logger.info(f'[Using Pandas: {pd.__version__}]')
 
 # Essentials 
 config = BertConfig()
-s3 = boto3.resource('s3')
-s3_client = boto3.client('s3')
+REGION = 'us-east-1'
+boto_session = boto3.session.Session(region_name=REGION)
+sm_session = sagemaker.Session(boto_session=boto_session)
 
 
 if __name__ == '__main__':
@@ -80,17 +82,22 @@ if __name__ == '__main__':
     
     # Download saved custom vocabulary file from S3 to local input path of the training cluster
     logger.info(f'Downloading custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{args.input_dir}/vocab/]')
-    bucket = s3.Bucket(S3_BUCKET)
     path = os.path.join(f'{args.input_dir}', 'vocab')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/vocab/vocab.txt', f'{path}/vocab.txt')    
+    logger.info(f'Path: {path}')
+    
+    S3Downloader.download(f's3://{S3_BUCKET}/data/vocab/', f'{path}/vocab/', sagemaker_session=sm_session)
+    logger.info(os.listdir(f'{args.input_dir}/'))
+    logger.info(os.listdir(f'{args.input_dir}/vocab/'))
          
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/processed', '/tmp/cache/data/processed')
+    S3Downloader.download(f's3://{S3_BUCKET}/data/processed/', '/tmp/cache/data/processed/', sagemaker_session=sm_session)
+    
+    logger.info(os.listdir('/tmp/cache/data/processed/'))
     
     # Re-create BERT WordPiece tokenizer 
     logger.info(f'Re-creating BERT tokenizer using custom vocabulary from [{args.input_dir}/vocab/]')
-    tokenizer = BertTokenizerFast.from_pretrained(f'{args.input_dir}/vocab/', config=config)
+    tokenizer = BertTokenizerFast.from_pretrained(f'{args.input_dir}/vocab', config=config)
     tokenizer.model_max_length = MAX_LENGTH
     tokenizer.init_kwargs['model_max_length'] = MAX_LENGTH
     logger.info(f'Tokenizer: {tokenizer}')
@@ -139,11 +146,9 @@ if __name__ == '__main__':
         logger.info(f'Saving trained MLM to [/tmp/cache/model/custom/]')
         trainer.save_model('/tmp/cache/model/custom')
         
-
         # Copy trained model from local directory of the training cluster to S3 
         logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/custom/]')
-        S3Uploader.upload('/tmp/cache/model/custom/pytorch_model.bin', f's3://{S3_BUCKET}/model/custom/pytorch_model.bin')
-        S3Uploader.upload('/tmp/cache/model/custom/config.json', f's3://{S3_BUCKET}/model/custom/config.json')
+        S3Uploader.upload('/tmp/cache/model/custom/', f's3://{S3_BUCKET}/model/custom/', sagemaker_session=sm_session)
 
         # Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
         logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
@@ -151,7 +156,7 @@ if __name__ == '__main__':
 
         # Copy vocab.txt to saved model artifacts location in S3
         logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
-        S3Uploader.upload(f'{path}/vocab.txt', f's3://{S3_BUCKET}/model/custom/vocab.txt')
+        S3Uploader.upload(f'{path}/vocab/', f's3://{S3_BUCKET}/model/custom/', sagemaker_session=sm_session)
 
         # Evaluate the trained model 
         logger.info('Create fill-mask task pipeline to evaluate trained MLM')

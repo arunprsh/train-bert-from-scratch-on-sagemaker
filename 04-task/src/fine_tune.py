@@ -61,7 +61,6 @@ if __name__ == '__main__':
     SAVE_STEPS = 10000
     SAVE_TOTAL_LIMIT = 2
     
-    
     # Load BERT Sequence Model 
     
     
