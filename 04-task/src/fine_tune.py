@@ -64,8 +64,6 @@ if __name__ == '__main__':
     # Load BERT Sequence Model 
     model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5,  force_download=True)
     
-    
-    
     # Load tokenized dataset 
     
     
@@ -87,22 +85,21 @@ if __name__ == '__main__':
                       eval_dataset=tokenized_data['validation'], 
                       tokenizer=tokenizer, 
                       compute_metrics=compute_metrics)
+    
+    # Evaluate 
     train_results = trainer.train()
     trainer.log_metrics('train', train_results.metrics)
     trainer.save_metrics('train', train_results.metrics)
     
-    
-    # Evaluate 
+    # Evaluate validation set results
     results = trainer.evaluate()
     trainer.log_metrics('validation', results)
     trainer.save_metrics('validation', results)
     
+    # Evaluate test set results 
     results = trainer.evaluate(eval_dataset=tokenized_data['test'])
     trainer.log_metrics('test', results)
     trainer.save_metrics('test', results)
-    
-    # Save model 
-    
     
     # Load label mapping for inference
     with open('.././data/label_map', 'rb') as f:
@@ -112,12 +109,10 @@ if __name__ == '__main__':
     trainer.model.config.label2id = label2id
     trainer.model.config.id2label = id2label
     
-    
     # Save model 
-    trainer.save_model('./model/')
-    
+    trainer.save_model(f'{args.model_dir}/fine-tuned/')
     
     # Test model for inference
-    classifier = pipeline('sentiment-analysis', model='./model/')
+    classifier = pipeline('sentiment-analysis', model=f'{args.model_dir}/fine-tuned/')
     prediction = classifier('I hate you')
     logger.info(prediction)
