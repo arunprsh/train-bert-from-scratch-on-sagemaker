@@ -80,18 +80,22 @@ if __name__ == '__main__':
     boto_session = boto3.session.Session(region_name=REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
     
+    path = '/tmp/cache/data/bert/processed/'
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+    
     # Copy preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/bert/processed/] to [/tmp/cache/data/bert/processed/]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed/', '/tmp/cache/data/bert/processed/', sagemaker_session=sm_session)
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/bert/processed/] to [{path}]')
+    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed/', path, sagemaker_session=sm_session)
     
     
     # Re-create original BERT WordPiece tokenizer 
-    logger.info(f'Re-creating BERT tokenizer using custom vocabulary from [{args.input_dir}/vocab/]')
+    logger.info(f'Re-creating original BERT tokenizer')
     tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
     logger.info(f'Tokenizer: {tokenizer}')
 
     # Read dataset 
-    chunked_datasets = datasets.load_from_disk('/tmp/cache/data/bert/processed')
+    chunked_datasets = datasets.load_from_disk(path)
     logger.info(f'Chunked datasets: {chunked_datasets}')
     
    

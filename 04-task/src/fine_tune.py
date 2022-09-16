@@ -72,23 +72,27 @@ if __name__ == '__main__':
     # Load BERT Sequence Model 
     model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5,  force_download=True)
     
+    # Re-create original BERT WordPiece tokenizer 
+    logger.info('Re-creating original BERT tokenizer')
+    tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
+    logger.info(f'Tokenizer: {tokenizer}')
+    
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed-clf/', '/tmp/cache/data/processed/', sagemaker_session=sm_session)
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/bert/processed/]')
+    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed-clf/', '/tmp/cache/data/bert/processed/', sagemaker_session=sm_session)
     
     # Load tokenized dataset 
-    tokenized_data = datasets.load_from_disk('/tmp/cache/data/processed')
+    tokenized_data = datasets.load_from_disk('/tmp/cache/data/bert/processed')
     logger.info(f'Tokenized data: {tokenized_data}')
-    
     
     # Fine-tune 
     training_args = TrainingArguments(output_dir='./tmp', 
                                   overwrite_output_dir=True, 
                                   optim='adamw_torch', 
                                   learning_rate=2e-5, 
-                                  per_device_train_batch_size=8, 
-                                  per_device_eval_batch_size=8, 
-                                  num_train_epochs=2,  
+                                  per_device_train_batch_size=BATCH_SIZE, 
+                                  per_device_eval_batch_size=BATCH_SIZE, 
+                                  num_train_epochs=TRAIN_EPOCHS,  
                                   weight_decay=0.01, 
                                   save_total_limit=2, 
                                   save_strategy='no',  
@@ -116,6 +120,8 @@ if __name__ == '__main__':
     trainer.log_metrics('test', results)
     trainer.save_metrics('test', results)
     
+    # Download label mapping from s3 to local
+    
     # Load label mapping for inference
     with open('.././data/label_map', 'rb') as f:
         label2id = pickle.load(f)
@@ -128,13 +134,15 @@ if __name__ == '__main__':
     trainer.save_model(f'{args.model_dir}/fine-tuned/')
     
      # Copy trained model from local directory of the training cluster to S3 
-    s3 = boto3.resource('s3')
+    
     s3.meta.client.upload_file(f'{args.model_dir}/fine-tuned/pytorch_model.bin', 
                                'sagemaker-us-east-1-119174016168', 
                                'model/fine-tuned-clf' + 'pytorch_model.bin')
     s3.meta.client.upload_file(f'{args.model_dir}/fine-tuned/config.json', 
                                'sagemaker-us-east-1-119174016168', 
                                'model/fine-tuned-clf' + 'config.json')
+    
+    S3Uploader.upload('/tmp/cache/model/finetuned/', f's3://{S3_BUCKET}/model/finetuned/', sagemaker_session=sm_session)
     
     # Test model for inference
     classifier = pipeline('sentiment-analysis', model=f'{args.model_dir}/fine-tuned/')
