@@ -86,6 +86,9 @@ if __name__ == '__main__':
     logger.info(f'Downloading custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{args.input_dir}/vocab/]')
     path = os.path.join(f'{args.input_dir}', 'vocab')
     
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+    
     S3Downloader.download(f's3://{S3_BUCKET}/data/vocab/', f'{path}/', sagemaker_session=sm_session)
          
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
