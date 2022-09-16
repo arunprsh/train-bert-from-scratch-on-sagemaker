@@ -72,12 +72,11 @@ if __name__ == '__main__':
     # Load BERT Sequence Model 
     model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5,  force_download=True)
     
-    # Load tokenized dataset 
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/processed/', '/tmp/cache/data/processed/', sagemaker_session=sm_session)
+    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed-clf/', '/tmp/cache/data/processed/', sagemaker_session=sm_session)
     
-    
+    # Load tokenized dataset 
     tokenized_data = datasets.load_from_disk('/tmp/cache/data/processed')
     logger.info(f'Tokenized data: {tokenized_data}')
     
@@ -94,6 +93,7 @@ if __name__ == '__main__':
                                   save_total_limit=2, 
                                   save_strategy='no',  
                                   load_best_model_at_end=False)
+    
     trainer = Trainer(model=model, 
                       args=training_args, 
                       train_dataset=tokenized_data['train'], 
