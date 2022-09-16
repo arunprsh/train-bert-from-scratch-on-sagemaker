@@ -12,10 +12,14 @@ from datasets import DatasetDict
 import pandas as pd
 import transformers
 import numpy as np
+import sagemaker
 import datasets
+import sklearn
 import logging 
 import pickle
 import torch
+import sys
+import os
 
 
 # Setup logging
@@ -83,7 +87,7 @@ if __name__ == '__main__':
     
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [{path}]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed-clf/', path', sagemaker_session=sm_session)
+    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed-clf/', path, sagemaker_session=sm_session)
     
     # Load tokenized dataset 
     tokenized_data = datasets.load_from_disk(path)
@@ -130,8 +134,10 @@ if __name__ == '__main__':
     # Load label mapping for inference
     with open('/tmp/cache/eval/label_map', 'rb') as f:
         label2id = pickle.load(f)
+        
     id2label = dict((str(v), k) for k, v in label2id.items())
     logger.info(id2label)
+    
     trainer.model.config.label2id = label2id
     trainer.model.config.id2label = id2label
     
@@ -141,7 +147,8 @@ if __name__ == '__main__':
     if os.path.exists('/tmp/cache/model/finetuned-clf/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf/config.json'):
         # Copy trained model from local directory of the training cluster to S3 
         logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
-        S3Uploader.upload('/tmp/cache/model/finetuned-clf/', f's3://{S3_BUCKET}/model/finetuned-clf/', sagemaker_session=sm_session)                    
+        S3Uploader.upload('/tmp/cache/model/finetuned-clf/', f's3://{S3_BUCKET}/model/finetuned-clf/', sagemaker_session=sm_session)  
+        
     # Test model for inference
     classifier = pipeline('sentiment-analysis', model=f'/tmp/cache/model/finetuned-clf/')
     prediction = classifier('I hate you')
