@@ -122,20 +122,16 @@ if __name__ == '__main__':
                       compute_metrics=compute_metrics)
     
     # Evaluate 
-    trainer.train()
-    #trainer.log_metrics('train', train_results.metrics)
-    #trainer.save_metrics('train', train_results.metrics)
+    train_metrics = trainer.train()
+    logger.info(f'Train metrics: {train_metrics}')
     
-    # Evaluate validation set results
-    #results = trainer.evaluate()
-    #trainer.log_metrics('validation', results)
-    #trainer.save_metrics('validation', results)
+    # Evaluate validation set 
+    val_metrics = trainer.evaluate()
+    logger.info(f'Validation metrics: {val_metrics}')
     
-    # Evaluate test set results 
-    results = trainer.evaluate(eval_dataset=tokenized_data['test'])
-    logger.info(f'Results: {results}')
-    #trainer.log_metrics('test', results)
-    #trainer.save_metrics('test', results)
+    # Evaluate test set (holdout)
+    test_metrics = trainer.evaluate(eval_dataset=tokenized_data['test'])
+    logger.info(f'Holdout metrics: {test_metrics}')
     
     # Download label mapping from s3 to local
     S3Downloader.download(f's3://{S3_BUCKET}/data/eval/', '/tmp/cache/eval/', sagemaker_session=sm_session)
@@ -149,7 +145,6 @@ if __name__ == '__main__':
     
     trainer.model.config.label2id = label2id
     trainer.model.config.id2label = id2label
-    
     
     if current_host == master_host:
         if not os.path.exists('/tmp/cache/model/finetuned-clf'):
