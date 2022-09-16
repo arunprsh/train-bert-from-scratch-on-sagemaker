@@ -78,7 +78,7 @@ if __name__ == '__main__':
     # Setup SageMaker Session for S3Downloader and S3Uploader
     s3 = boto3.resource('s3')
     boto_session = boto3.session.Session(region_name=REGION)
-    sagemaker.Session(boto_session=boto_session)
+    sm_session = sagemaker.Session(boto_session=boto_session)
     
     # Copy preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/bert/processed/] to [/tmp/cache/data/bert/processed/]')
