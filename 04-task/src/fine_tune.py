@@ -3,9 +3,11 @@ from transformers import BertForSequenceClassification
 from sklearn.metrics import accuracy_score
 from transformers import TrainingArguments
 from transformers import BertTokenizerFast
+from sagemaker.s3 import S3Downloader
+from sagemaker.s3 import S3Uploader
+from datasets import load_dataset
 from transformers import pipeline
 from transformers import Trainer
-from datasets import load_dataset
 from datasets import DatasetDict
 import pandas as pd
 import transformers
@@ -46,6 +48,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_len', type=int)
     parser.add_argument('--num_train_epochs', type=int)
     parser.add_argument('--per_device_train_batch_size', type=int)
+    parser.add_argument('--region', type=str)
     
     args, _ = parser.parse_known_args()
     current_host = args.current_host
@@ -58,13 +61,25 @@ if __name__ == '__main__':
     MAX_LENGTH = args.max_len
     TRAIN_EPOCHS = args.num_train_epochs
     BATCH_SIZE = args.per_device_train_batch_size
+    REGION = args.region
     SAVE_STEPS = 10000
     SAVE_TOTAL_LIMIT = 2
+    
+    # Setup SageMaker Session for S3Downloader and S3Uploader 
+    boto_session = boto3.session.Session(region_name=REGION)
+    sm_session = sagemaker.Session(boto_session=boto_session)
     
     # Load BERT Sequence Model 
     model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5,  force_download=True)
     
     # Load tokenized dataset 
+    # Download preprocessed datasets from S3 to local EBS volume (cache dir)
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
+    S3Downloader.download(f's3://{S3_BUCKET}/data/processed/', '/tmp/cache/data/processed/', sagemaker_session=sm_session)
+    
+    
+    tokenized_data = datasets.load_from_disk('/tmp/cache/data/processed')
+    logger.info(f'Tokenized data: {tokenized_data}')
     
     
     # Fine-tune 
