@@ -2,7 +2,8 @@ from transformers import DataCollatorForLanguageModeling
 from transformers import TrainingArguments
 from transformers import BertTokenizerFast
 from transformers import BertForMaskedLM
-from transformers import BertConfig
+from sagemaker.s3 import S3Downloader
+from sagemaker.s3 import S3Uploader
 from transformers import pipeline 
 from datasets import load_dataset
 from transformers import Trainer
@@ -36,12 +37,8 @@ logger.info(f'[Using Transformers: {transformers.__version__}]')
 logger.info(f'[Using SageMaker: {sagemaker.__version__}]')
 logger.info(f'[Using Datasets: {datasets.__version__}]')
 logger.info(f'[Using Torch: {torch.__version__}]')
+logger.info(f'[Using Boto3: {boto3.__version__}]')
 logger.info(f'[Using Pandas: {pd.__version__}]')
-
-# Essentials 
-config = BertConfig()
-s3 = boto3.resource('s3')
-s3_client = boto3.client('s3')
 
 
 if __name__ == '__main__':
@@ -60,6 +57,7 @@ if __name__ == '__main__':
     parser.add_argument('--chunk_size', type=int)
     parser.add_argument('--num_train_epochs', type=int)
     parser.add_argument('--per_device_train_batch_size', type=int)
+    parser.add_argument('--region', type=str)
     
     args, _ = parser.parse_known_args()
     current_host = args.current_host
@@ -73,69 +71,27 @@ if __name__ == '__main__':
     CHUNK_SIZE = args.chunk_size
     TRAIN_EPOCHS = args.num_train_epochs
     BATCH_SIZE = args.per_device_train_batch_size
+    REGION = args.region 
     SAVE_STEPS = 10000
     SAVE_TOTAL_LIMIT = 2
     
-    # Download saved custom vocabulary file from S3 to local input path of the training cluster
-    logger.info(f'Downloading custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{args.input_dir}/vocab/]')
-    bucket = s3.Bucket(S3_BUCKET)
-    path = os.path.join(f'{args.input_dir}', 'vocab')
+    # Setup SageMaker Session for S3Downloader and S3Uploader
+    s3 = boto3.resource('s3')
+    boto_session = boto3.session.Session(region_name=REGION)
+    sagemaker.Session(boto_session=boto_session)
     
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-
-    with open(f'{path}/vocab.txt', 'wb') as data:
-        bucket.download_fileobj('data/vocab/vocab.txt', data)
-        
     # Copy preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
-    def get_bucket_content(bucket, prefix=''):
-        files = []
-        folders = []
-        default_kwargs = {'Bucket': bucket, 'Prefix': prefix}
-        next_token = ''
-        while next_token is not None:
-            updated_kwargs = default_kwargs.copy()
-            if next_token != '':
-                updated_kwargs['ContinuationToken'] = next_token
-            response = s3_client.list_objects_v2(**default_kwargs)
-            contents = response.get('Contents')
-            for result in contents:
-                key = result.get('Key')
-                if key[-1] == '/':
-                    folders.append(key)
-                else:
-                    files.append(key)
-            next_token = response.get('NextContinuationToken')
-        return files, folders
-    
-    files, folders = get_bucket_content(S3_BUCKET, 'data/processed/')
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/bert/processed/] to [/tmp/cache/data/bert/processed/]')
+    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed/', '/tmp/cache/data/bert/processed/', sagemaker_session=sm_session)
     
     
-    def copy_to_local_from_s3(bucket: str, local_path: str, files: list, folders: list) -> None:
-        local_path = Path(local_path)
-        for folder in folders:
-            folder_path = Path.joinpath(local_path, folder)
-            folder_path.mkdir(parents=True, exist_ok=True)
-
-        for file_name in files:
-            file_path = Path.joinpath(local_path, file_name)
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            s3_client.download_file(bucket, file_name, str(file_path))
-
-
-    copy_to_local_from_s3(S3_BUCKET, '/tmp/cache', files, folders)
-    
-    
-    # Re-create BERT WordPiece tokenizer 
+    # Re-create original BERT WordPiece tokenizer 
     logger.info(f'Re-creating BERT tokenizer using custom vocabulary from [{args.input_dir}/vocab/]')
-    tokenizer = BertTokenizerFast.from_pretrained(f'{args.input_dir}/vocab/', config=config)
-    tokenizer.model_max_length = MAX_LENGTH
-    tokenizer.init_kwargs['model_max_length'] = MAX_LENGTH
+    tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
     logger.info(f'Tokenizer: {tokenizer}')
 
     # Read dataset 
-    chunked_datasets = datasets.load_from_disk('/tmp/cache/data/processed')
+    chunked_datasets = datasets.load_from_disk('/tmp/cache/data/bert/processed')
     logger.info(f'Chunked datasets: {chunked_datasets}')
     
    
@@ -146,7 +102,7 @@ if __name__ == '__main__':
         
     # Load MLM
     logger.info('Loading BertForMaskedLM model')
-    mlm = BertForMaskedLM(config=config)
+    mlm = BertForMaskedLM.from_pretrained('bert-base-uncased')
     
     # Train MLM
     logger.info('Training MLM')
@@ -174,30 +130,21 @@ if __name__ == '__main__':
     
     
     if current_host == master_host:
-        if not os.path.exists('/tmp/cache/model/custom'):
-            os.makedirs('/tmp/cache/model/custom', exist_ok=True)
+        if not os.path.exists('/tmp/cache/model/finetuned'):
+            os.makedirs('/tmp/cache/model/finetuned', exist_ok=True)
 
         # Save trained model to local model directory
-        logger.info(f'Saving trained MLM to [/tmp/cache/model/custom/]')
-        trainer.save_model('/tmp/cache/model/custom')
-        
-        if os.path.exists('/tmp/cache/model/custom/pytorch_model.bin') and os.path.exists('/tmp/cache/model/custom/config.json'):
+        logger.info(f'Saving trained MLM to [/tmp/cache/model/finetuned/]')
+        trainer.save_model('/tmp/cache/model/finetuned')
+
+        if os.path.exists('/tmp/cache/model/finetuned/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
-            logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/custom/]')
-            s3.meta.client.upload_file('/tmp/cache/model/custom/pytorch_model.bin', S3_BUCKET, 'model/custom/pytorch_model.bin')
-            s3.meta.client.upload_file('/tmp/cache/model/custom/config.json', S3_BUCKET, 'model/custom/config.json')
-
-            # Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
-            logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
-            shutil.copyfile(f'{path}/vocab.txt', '/tmp/cache/model/custom/vocab.txt')
-
-            # Copy vocab.txt to saved model artifacts location in S3
-            logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
-            s3.meta.client.upload_file(f'{path}/vocab.txt', S3_BUCKET, 'model/custom/vocab.txt')
+            logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned/]')
+            S3Uploader.upload('/tmp/cache/model/finetuned/', f's3://{S3_BUCKET}/model/finetuned/', sagemaker_session=sm_session)
 
             # Evaluate the trained model 
             logger.info('Create fill-mask task pipeline to evaluate trained MLM')
-            fill_mask = pipeline('fill-mask', model='/tmp/cache/model/custom')
+            fill_mask = pipeline('fill-mask', model='/tmp/cache/model/finetuned', tokenizer=tokenizer)
             df = pd.read_csv(f's3://{S3_BUCKET}/data/eval/eval_mlm.csv')
 
             for gt, masked_sentence in zip(df.ground_truth.tolist(), df.masked.tolist()):
