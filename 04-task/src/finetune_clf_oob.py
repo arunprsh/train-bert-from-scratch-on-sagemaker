@@ -131,12 +131,13 @@ if __name__ == '__main__':
     #trainer.save_metrics('validation', results)
     
     # Evaluate test set results 
-    #results = trainer.evaluate(eval_dataset=tokenized_data['test'])
+    results = trainer.evaluate(eval_dataset=tokenized_data['test'])
+    logger.info(f'Results: {results}')
     #trainer.log_metrics('test', results)
     #trainer.save_metrics('test', results)
     
     # Download label mapping from s3 to local
-    S3Downloader.download(f's3://{S3_BUCKET}/data/eval/', '/tmp/cache/eval/')
+    S3Downloader.download(f's3://{S3_BUCKET}/data/eval/', '/tmp/cache/eval/', sagemaker_session=sm_session)
     
     # Load label mapping for inference
     with open('/tmp/cache/eval/label_map', 'rb') as f:
