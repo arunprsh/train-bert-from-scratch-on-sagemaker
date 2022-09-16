@@ -13,10 +13,12 @@ import pandas as pd
 import transformers
 import numpy as np
 import sagemaker
+import argparse
 import datasets
 import sklearn
 import logging 
 import pickle
+import boto3
 import torch
 import sys
 import os
@@ -93,40 +95,45 @@ if __name__ == '__main__':
     tokenized_data = datasets.load_from_disk(path)
     logger.info(f'Tokenized data: {tokenized_data}')
     
+    # Define compute metrics
+    def compute_metrics(pred):
+        labels = pred.label_ids
+        preds = pred.predictions.argmax(-1)
+        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='micro')
+        acc = accuracy_score(labels, preds)
+        return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall}
+    
     # Fine-tune 
-    training_args = TrainingArguments(output_dir='./tmp', 
+    training_args = TrainingArguments(output_dir='/tmp/checkpoints', 
                                       overwrite_output_dir=True, 
                                       optim='adamw_torch', 
-                                      learning_rate=2e-5, 
                                       per_device_train_batch_size=BATCH_SIZE, 
                                       per_device_eval_batch_size=BATCH_SIZE, 
+                                      evaluation_strategy='epoch',
                                       num_train_epochs=TRAIN_EPOCHS,  
-                                      weight_decay=0.01, 
-                                      save_total_limit=2, 
-                                      save_strategy='no',  
-                                      load_best_model_at_end=False)
+                                      save_steps=SAVE_STEPS,
+                                      save_total_limit=SAVE_TOTAL_LIMIT)
     
     trainer = Trainer(model=model, 
                       args=training_args, 
                       train_dataset=tokenized_data['train'], 
                       eval_dataset=tokenized_data['validation'], 
-                      tokenizer=tokenizer, 
-                      compute_metrics=compute_metrics)
+                      tokenizer=tokenizer)
     
     # Evaluate 
-    train_results = trainer.train()
-    trainer.log_metrics('train', train_results.metrics)
-    trainer.save_metrics('train', train_results.metrics)
+    trainer.train()
+    #trainer.log_metrics('train', train_results.metrics)
+    #trainer.save_metrics('train', train_results.metrics)
     
     # Evaluate validation set results
-    results = trainer.evaluate()
-    trainer.log_metrics('validation', results)
-    trainer.save_metrics('validation', results)
+    #results = trainer.evaluate()
+    #trainer.log_metrics('validation', results)
+    #trainer.save_metrics('validation', results)
     
     # Evaluate test set results 
-    results = trainer.evaluate(eval_dataset=tokenized_data['test'])
-    trainer.log_metrics('test', results)
-    trainer.save_metrics('test', results)
+    #results = trainer.evaluate(eval_dataset=tokenized_data['test'])
+    #trainer.log_metrics('test', results)
+    #trainer.save_metrics('test', results)
     
     # Download label mapping from s3 to local
     S3Downloader.download(f's3://{S3_BUCKET}/data/eval/', '/tmp/cache/eval/')
