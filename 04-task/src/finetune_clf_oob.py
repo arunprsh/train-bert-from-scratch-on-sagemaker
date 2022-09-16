@@ -118,7 +118,8 @@ if __name__ == '__main__':
                       args=training_args, 
                       train_dataset=tokenized_data['train'], 
                       eval_dataset=tokenized_data['validation'], 
-                      tokenizer=tokenizer)
+                      tokenizer=tokenizer, 
+                      compute_metrics=compute_metrics)
     
     # Evaluate 
     trainer.train()
@@ -144,20 +145,25 @@ if __name__ == '__main__':
         label2id = pickle.load(f)
         
     id2label = dict((str(v), k) for k, v in label2id.items())
-    logger.info(id2label)
+    logger.info(f'Label mapping: {id2label}')
     
     trainer.model.config.label2id = label2id
     trainer.model.config.id2label = id2label
     
-    # Save model                     
-    trainer.save_model('/tmp/cache/model/finetuned-clf/')
+    
+    if current_host == master_host:
+        if not os.path.exists('/tmp/cache/model/finetuned-clf'):
+            os.makedirs('/tmp/cache/model/finetuned-clf', exist_ok=True)
+    
+        # Save model                     
+        trainer.save_model('/tmp/cache/model/finetuned-clf')
 
-    if os.path.exists('/tmp/cache/model/finetuned-clf/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf/config.json'):
-        # Copy trained model from local directory of the training cluster to S3 
-        logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
-        S3Uploader.upload('/tmp/cache/model/finetuned-clf/', f's3://{S3_BUCKET}/model/finetuned-clf/', sagemaker_session=sm_session)  
+        if os.path.exists('/tmp/cache/model/finetuned-clf/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf/config.json'):
+            # Copy trained model from local directory of the training cluster to S3 
+            logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
+            S3Uploader.upload('/tmp/cache/model/finetuned-clf/', f's3://{S3_BUCKET}/model/finetuned-clf/', sagemaker_session=sm_session)  
         
-    # Test model for inference
-    classifier = pipeline('sentiment-analysis', model=f'/tmp/cache/model/finetuned-clf/')
-    prediction = classifier('I hate you')
-    logger.info(prediction)
+            # Test model for inference
+            classifier = pipeline('sentiment-analysis', model=f'/tmp/cache/model/finetuned-clf')
+            prediction = classifier('I hate you')
+            logger.info(prediction)
