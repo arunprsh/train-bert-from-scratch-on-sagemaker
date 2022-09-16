@@ -125,28 +125,24 @@ if __name__ == '__main__':
     trainer.save_metrics('test', results)
     
     # Download label mapping from s3 to local
+    S3Downloader.download(f's3://{S3_BUCKET}/data/eval/', '/tmp/cache/eval/')
     
     # Load label mapping for inference
-    with open('.././data/label_map', 'rb') as f:
+    with open('/tmp/cache/eval/label_map', 'rb') as f:
         label2id = pickle.load(f)
     id2label = dict((str(v), k) for k, v in label2id.items())
     logger.info(id2label)
     trainer.model.config.label2id = label2id
     trainer.model.config.id2label = id2label
     
-    # Save model 
-    trainer.save_model(f'{args.model_dir}/fine-tuned/')
-    
-     # Copy trained model from local directory of the training cluster to S3 
-    
-    s3.meta.client.upload_file(f'{args.model_dir}/fine-tuned/pytorch_model.bin', 'sagemaker-us-east-1-119174016168', 'model/fine-tuned-clf' + 'pytorch_model.bin')
-    s3.meta.client.upload_file(f'{args.model_dir}/fine-tuned/config.json', 
-                               'sagemaker-us-east-1-119174016168', 
-                               'model/fine-tuned-clf' + 'config.json')
-    
-    S3Uploader.upload('/tmp/cache/model/finetuned/', f's3://{S3_BUCKET}/model/finetuned/', sagemaker_session=sm_session)
-    
+    # Save model                     
+    trainer.save_model('/tmp/cache/model/finetuned-clf/')
+
+    if os.path.exists('/tmp/cache/model/finetuned-clf/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf/config.json'):
+        # Copy trained model from local directory of the training cluster to S3 
+        logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
+        S3Uploader.upload('/tmp/cache/model/finetuned-clf/', f's3://{S3_BUCKET}/model/finetuned-clf/', sagemaker_session=sm_session)                    
     # Test model for inference
-    classifier = pipeline('sentiment-analysis', model=f'{args.model_dir}/fine-tuned/')
+    classifier = pipeline('sentiment-analysis', model=f'/tmp/cache/model/finetuned-clf/')
     prediction = classifier('I hate you')
     logger.info(prediction)
