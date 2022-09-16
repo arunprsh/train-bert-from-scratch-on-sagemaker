@@ -156,7 +156,7 @@ if __name__ == '__main__':
         if os.path.exists('/tmp/cache/model/finetuned-clf/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
-            S3Uploader.upload('/tmp/cache/model/finetuned-clf/', f's3://{S3_BUCKET}/model/finetuned-clf/', sagemaker_session=sm_session)  
+            S3Uploader.upload('/tmp/cache/model/finetuned-clf', f's3://{S3_BUCKET}/model/finetuned-clf', sagemaker_session=sm_session)  
         
             # Test model for inference
             classifier = pipeline('sentiment-analysis', model=f'/tmp/cache/model/finetuned-clf')
