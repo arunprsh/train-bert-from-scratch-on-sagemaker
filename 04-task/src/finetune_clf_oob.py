@@ -77,26 +77,30 @@ if __name__ == '__main__':
     tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
     logger.info(f'Tokenizer: {tokenizer}')
     
+    path = '/tmp/cache/data/bert/processed-clf/'
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+    
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/bert/processed/]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed-clf/', '/tmp/cache/data/bert/processed/', sagemaker_session=sm_session)
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [{path}]')
+    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed-clf/', path', sagemaker_session=sm_session)
     
     # Load tokenized dataset 
-    tokenized_data = datasets.load_from_disk('/tmp/cache/data/bert/processed')
+    tokenized_data = datasets.load_from_disk(path)
     logger.info(f'Tokenized data: {tokenized_data}')
     
     # Fine-tune 
     training_args = TrainingArguments(output_dir='./tmp', 
-                                  overwrite_output_dir=True, 
-                                  optim='adamw_torch', 
-                                  learning_rate=2e-5, 
-                                  per_device_train_batch_size=BATCH_SIZE, 
-                                  per_device_eval_batch_size=BATCH_SIZE, 
-                                  num_train_epochs=TRAIN_EPOCHS,  
-                                  weight_decay=0.01, 
-                                  save_total_limit=2, 
-                                  save_strategy='no',  
-                                  load_best_model_at_end=False)
+                                      overwrite_output_dir=True, 
+                                      optim='adamw_torch', 
+                                      learning_rate=2e-5, 
+                                      per_device_train_batch_size=BATCH_SIZE, 
+                                      per_device_eval_batch_size=BATCH_SIZE, 
+                                      num_train_epochs=TRAIN_EPOCHS,  
+                                      weight_decay=0.01, 
+                                      save_total_limit=2, 
+                                      save_strategy='no',  
+                                      load_best_model_at_end=False)
     
     trainer = Trainer(model=model, 
                       args=training_args, 
@@ -135,9 +139,7 @@ if __name__ == '__main__':
     
      # Copy trained model from local directory of the training cluster to S3 
     
-    s3.meta.client.upload_file(f'{args.model_dir}/fine-tuned/pytorch_model.bin', 
-                               'sagemaker-us-east-1-119174016168', 
-                               'model/fine-tuned-clf' + 'pytorch_model.bin')
+    s3.meta.client.upload_file(f'{args.model_dir}/fine-tuned/pytorch_model.bin', 'sagemaker-us-east-1-119174016168', 'model/fine-tuned-clf' + 'pytorch_model.bin')
     s3.meta.client.upload_file(f'{args.model_dir}/fine-tuned/config.json', 
                                'sagemaker-us-east-1-119174016168', 
                                'model/fine-tuned-clf' + 'config.json')
