@@ -91,7 +91,7 @@ if __name__ == '__main__':
         
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
-        S3Uploader.upload(s3_path, ebs_path, sagemaker_session=session)
+        S3Uploader.upload(ebs_path, s3_path, sagemaker_session=session)
     
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/bert/processed-clf/]')
