@@ -94,11 +94,11 @@ if __name__ == '__main__':
         S3Uploader.download(s3_path, ebs_path, sagemaker_session=session)
     
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [{path}]')
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/bert/processed-clf/]')
     download(f's3://{S3_BUCKET}/data/bert/processed-clf/', '/tmp/cache/data/bert/processed-clf/', sm_session)
     
     # Load tokenized dataset 
-    tokenized_data = datasets.load_from_disk(path)
+    tokenized_data = datasets.load_from_disk('/tmp/cache/data/bert/processed-clf/')
     logger.info(f'Tokenized data: {tokenized_data}')
     
     # Define compute metrics
