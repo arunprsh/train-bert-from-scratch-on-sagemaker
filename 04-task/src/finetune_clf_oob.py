@@ -139,19 +139,6 @@ if __name__ == '__main__':
     test_metrics = trainer.evaluate(eval_dataset=tokenized_data['test'])
     logger.info(f'Holdout metrics: {test_metrics}')
     
-    # Download label mapping from s3 to local
-    download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
-    
-    # Load label mapping for inference
-    with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
-        label2id = pickle.load(f)
-        
-    id2label = dict((str(v), k) for k, v in label2id.items())
-    logger.info(f'Label mapping: {id2label}')
-    
-    trainer.model.config.label2id = label2id
-    trainer.model.config.id2label = id2label
-    
     if current_host == master_host:
         if not os.path.exists('/tmp/cache/model/finetuned-clf'):
             os.makedirs('/tmp/cache/model/finetuned-clf', exist_ok=True)
@@ -163,8 +150,21 @@ if __name__ == '__main__':
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
             upload('/tmp/cache/model/finetuned-clf', f's3://{S3_BUCKET}/model/finetuned-clf', sm_session)  
+            
+            # Download label mapping from s3 to local
+            download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
+    
+            # Load label mapping for inference
+            with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
+                label2id = pickle.load(f)
+        
+            id2label = dict((str(v), k) for k, v in label2id.items())
+            logger.info(f'Label mapping: {id2label}')
+    
+            trainer.model.config.label2id = label2id
+            trainer.model.config.id2label = id2label
         
             # Test model for inference
             classifier = pipeline('sentiment-analysis', model='/tmp/cache/model/finetuned-clf')
-            prediction = classifier('I hate you')
+            prediction = classifier('Covid pandemic is still raging in may parts of the world')
             logger.info(prediction)
