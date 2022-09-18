@@ -3,6 +3,7 @@ from transformers import BertForSequenceClassification
 from sklearn.metrics import accuracy_score
 from transformers import TrainingArguments
 from transformers import BertTokenizerFast
+from sagemaker.session import Session
 from sagemaker.s3 import S3Downloader
 from sagemaker.s3 import S3Uploader
 from datasets import load_dataset
@@ -83,13 +84,18 @@ if __name__ == '__main__':
     tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
     logger.info(f'Tokenizer: {tokenizer}')
     
-    path = '/tmp/cache/data/bert/processed-clf/'
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
+    def download(s3_path: str, ebs_path: str, session: Session) -> None:
+        if not os.path.exists(ebs_path):
+            os.makedirs(ebs_path, exist_ok=True)
+        S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
+        
+        
+    def upload(ebs_path: str, s3_path: str, session: Session) -> None:
+        S3Uploader.download(s3_path, ebs_path, sagemaker_session=session)
     
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [{path}]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed-clf/', path, sagemaker_session=sm_session)
+    download(f's3://{S3_BUCKET}/data/bert/processed-clf/', '/tmp/cache/data/bert/processed-clf/', sm_session)
     
     # Load tokenized dataset 
     tokenized_data = datasets.load_from_disk(path)
@@ -134,10 +140,10 @@ if __name__ == '__main__':
     logger.info(f'Holdout metrics: {test_metrics}')
     
     # Download label mapping from s3 to local
-    S3Downloader.download(f's3://{S3_BUCKET}/data/eval/', '/tmp/cache/eval/', sagemaker_session=sm_session)
+    download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
     
     # Load label mapping for inference
-    with open('/tmp/cache/eval/label_map', 'rb') as f:
+    with open('/tmp/cache/labels/label_map', 'rb') as f:
         label2id = pickle.load(f)
         
     id2label = dict((str(v), k) for k, v in label2id.items())
@@ -156,9 +162,9 @@ if __name__ == '__main__':
         if os.path.exists('/tmp/cache/model/finetuned-clf/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
-            S3Uploader.upload('/tmp/cache/model/finetuned-clf', f's3://{S3_BUCKET}/model/finetuned-clf', sagemaker_session=sm_session)  
+            upload('/tmp/cache/model/finetuned-clf', f's3://{S3_BUCKET}/model/finetuned-clf', sm_session)  
         
             # Test model for inference
-            classifier = pipeline('sentiment-analysis', model=f'/tmp/cache/model/finetuned-clf')
+            classifier = pipeline('sentiment-analysis', model='/tmp/cache/model/finetuned-clf')
             prediction = classifier('I hate you')
             logger.info(prediction)
