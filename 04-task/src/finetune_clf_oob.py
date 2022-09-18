@@ -91,7 +91,7 @@ if __name__ == '__main__':
         
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
-        S3Uploader.download(s3_path, ebs_path, sagemaker_session=session)
+        S3Uploader.upload(s3_path, ebs_path, sagemaker_session=session)
     
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/bert/processed-clf/]')
@@ -143,7 +143,7 @@ if __name__ == '__main__':
     download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
     
     # Load label mapping for inference
-    with open('/tmp/cache/labels/label_map', 'rb') as f:
+    with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
         label2id = pickle.load(f)
         
     id2label = dict((str(v), k) for k, v in label2id.items())
