@@ -1,6 +1,7 @@
 from sklearn.metrics import precision_recall_fscore_support
 from transformers import BertForSequenceClassification
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix
 from transformers import TrainingArguments
 from transformers import BertTokenizerFast
 from sagemaker.session import Session
@@ -108,9 +109,10 @@ if __name__ == '__main__':
     def compute_metrics(pred):
         labels = pred.label_ids
         preds = pred.predictions.argmax(-1)
-        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='micro')
+        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='macro')
+        cm = confusion_matrix(labels, preds)
         acc = accuracy_score(labels, preds)
-        return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall}
+        return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall, 'confusion_matrix': cm}
     
     # Fine-tune 
     training_args = TrainingArguments(output_dir='/tmp/checkpoints', 
@@ -141,6 +143,7 @@ if __name__ == '__main__':
     # Evaluate test set (holdout)
     test_metrics = trainer.evaluate(eval_dataset=tokenized_data['test'])
     logger.info(f'Holdout metrics: {test_metrics}')
+    logger.info(pd.DataFrame(test_metrics['eval_confusion_matrix'], columns=['0', '1', '2', '3', '4']))
     
     if current_host == master_host:
         if not os.path.exists('/tmp/cache/model/finetuned-clf-custom'):
