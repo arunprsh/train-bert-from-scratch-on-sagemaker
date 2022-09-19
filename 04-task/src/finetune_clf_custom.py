@@ -143,7 +143,6 @@ if __name__ == '__main__':
     # Evaluate test set (holdout)
     test_metrics = trainer.evaluate(eval_dataset=tokenized_data['test'])
     logger.info(f'Holdout metrics: {test_metrics}')
-    logger.info(pd.DataFrame(test_metrics['eval_confusion_matrix'], columns=['0', '1', '2', '3', '4']))
     
     if current_host == master_host:
         if not os.path.exists('/tmp/cache/model/finetuned-clf-custom'):
