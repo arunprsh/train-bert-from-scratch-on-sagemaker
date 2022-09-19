@@ -3,7 +3,9 @@ from transformers import BertForSequenceClassification
 from sklearn.metrics import accuracy_score
 from transformers import TrainingArguments
 from transformers import BertTokenizerFast
+from sagemaker.session import Session
 from sagemaker.s3 import S3Downloader
+from transformers import BertConfig
 from sagemaker.s3 import S3Uploader
 from datasets import load_dataset
 from transformers import pipeline
@@ -18,6 +20,7 @@ import datasets
 import sklearn
 import logging 
 import pickle
+import boto3
 import torch
 import sys
 import os
@@ -74,50 +77,51 @@ if __name__ == '__main__':
     boto_session = boto3.session.Session(region_name=REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
     
-    # Load BERT Sequence Model 
+    def download(s3_path: str, ebs_path: str, session: Session) -> None:
+        if not os.path.exists(ebs_path):
+            os.makedirs(ebs_path, exist_ok=True)
+        S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
+        
+        
+    def upload(ebs_path: str, s3_path: str, session: Session) -> None:
+        S3Uploader.upload(ebs_path, s3_path, sagemaker_session=session)
     
+    # Load BERT MLM trained from scratch
+    download(f's3://{S3_BUCKET}/model/custom/', '/tmp/cache/model/custom/', sm_session)
+    model = BertForSequenceClassification.from_pretrained('/tmp/cache/model/custom', num_labels=5,  force_download=True)
     
-    # Download saved custom vocabulary file from S3 to local input path of the training cluster
-    logger.info(f'Downloading custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{args.input_dir}/vocab/]')
-    path = os.path.join(f'{args.input_dir}', 'vocab')
-    
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-    
-    S3Downloader.download(f's3://{S3_BUCKET}/data/vocab/', f'{path}/', sagemaker_session=sm_session)
-    
-    
-    # Re-create original BERT WordPiece tokenizer 
+    # Re-create tokenizer trained from scratch
     logger.info('Re-creating original BERT tokenizer')
-    tokenizer = BertTokenizerFast.from_pretrained(path, config=config)
-    tokenizer.model_max_length = MAX_LENGTH
-    tokenizer.init_kwargs['model_max_length'] = MAX_LENGTH
+    download(f's3://{S3_BUCKET}/data/vocab/', '/tmp/cache/vocab/', sm_session)
+    tokenizer = BertTokenizerFast.from_pretrained('/tmp/cache/vocab/')
     logger.info(f'Tokenizer: {tokenizer}')
     
-    path = '/tmp/cache/data/processed-clf/'
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-    
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [{path}]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/processed-clf/', path, sagemaker_session=sm_session)
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed-clf/] to [/tmp/cache/data/processed-clf/]')
+    download(f's3://{S3_BUCKET}/data/processed-clf/', '/tmp/cache/data/processed-clf/', sm_session)
     
     # Load tokenized dataset 
-    tokenized_data = datasets.load_from_disk(path)
+    tokenized_data = datasets.load_from_disk('/tmp/cache/data/processed-clf/')
     logger.info(f'Tokenized data: {tokenized_data}')
     
+    # Define compute metrics
+    def compute_metrics(pred):
+        labels = pred.label_ids
+        preds = pred.predictions.argmax(-1)
+        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='micro')
+        acc = accuracy_score(labels, preds)
+        return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall}
+    
     # Fine-tune 
-    training_args = TrainingArguments(output_dir='./tmp', 
+    training_args = TrainingArguments(output_dir='/tmp/checkpoints', 
                                       overwrite_output_dir=True, 
                                       optim='adamw_torch', 
-                                      learning_rate=2e-5, 
                                       per_device_train_batch_size=BATCH_SIZE, 
                                       per_device_eval_batch_size=BATCH_SIZE, 
+                                      evaluation_strategy='epoch',
                                       num_train_epochs=TRAIN_EPOCHS,  
-                                      weight_decay=0.01, 
-                                      save_total_limit=2, 
-                                      save_strategy='no',  
-                                      load_best_model_at_end=False)
+                                      save_steps=SAVE_STEPS,
+                                      save_total_limit=SAVE_TOTAL_LIMIT)
     
     trainer = Trainer(model=model, 
                       args=training_args, 
@@ -127,42 +131,44 @@ if __name__ == '__main__':
                       compute_metrics=compute_metrics)
     
     # Evaluate 
-    train_results = trainer.train()
-    trainer.log_metrics('train', train_results.metrics)
-    trainer.save_metrics('train', train_results.metrics)
+    train_metrics = trainer.train()
+    logger.info(f'Train metrics: {train_metrics}')
     
-    # Evaluate validation set results
-    results = trainer.evaluate()
-    trainer.log_metrics('validation', results)
-    trainer.save_metrics('validation', results)
+    # Evaluate validation set 
+    val_metrics = trainer.evaluate()
+    logger.info(f'Validation metrics: {val_metrics}')
     
-    # Evaluate test set results 
-    results = trainer.evaluate(eval_dataset=tokenized_data['test'])
-    trainer.log_metrics('test', results)
-    trainer.save_metrics('test', results)
+    # Evaluate test set (holdout)
+    test_metrics = trainer.evaluate(eval_dataset=tokenized_data['test'])
+    logger.info(f'Holdout metrics: {test_metrics}')
     
-    # Download label mapping from s3 to local
-    S3Downloader.download(f's3://{S3_BUCKET}/data/eval/', '/tmp/cache/eval/')
+    if current_host == master_host:
+        if not os.path.exists('/tmp/cache/model/finetuned-clf-custom'):
+            os.makedirs('/tmp/cache/model/finetuned-clf-custom', exist_ok=True)
     
-    # Load label mapping for inference
-    with open('/tmp/cache/eval/label_map', 'rb') as f:
-        label2id = pickle.load(f)
-        
-    id2label = dict((str(v), k) for k, v in label2id.items())
-    logger.info(id2label)
-    
-    trainer.model.config.label2id = label2id
-    trainer.model.config.id2label = id2label
-    
-    # Save model                     
-    trainer.save_model('/tmp/cache/model/finetuned-clf/')
+        # Save model                     
+        trainer.save_model('/tmp/cache/model/finetuned-clf-custom')
 
-    if os.path.exists('/tmp/cache/model/finetuned-clf/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf/config.json'):
-        # Copy trained model from local directory of the training cluster to S3 
-        logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
-        S3Uploader.upload('/tmp/cache/model/finetuned-clf/', f's3://{S3_BUCKET}/model/finetuned-clf/', sagemaker_session=sm_session)  
+        if os.path.exists('/tmp/cache/model/finetuned-clf-custom/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf-custom/config.json'):
+            # Copy trained model from local directory of the training cluster to S3 
+            logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf-custom/]')
+            upload('/tmp/cache/model/finetuned-clf-custom', f's3://{S3_BUCKET}/model/finetuned-clf-custom', sm_session)  
+            
+            # Download label mapping from s3 to local
+            download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
+    
+            # Load label mapping for inference
+            with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
+                label2id = pickle.load(f)
         
-    # Test model for inference
-    classifier = pipeline('sentiment-analysis', model=f'/tmp/cache/model/finetuned-clf/')
-    prediction = classifier('I hate you')
-    logger.info(prediction)
+            id2label = dict((str(v), k) for k, v in label2id.items())
+            logger.info(f'Label mapping: {id2label}')
+    
+            trainer.model.config.label2id = label2id
+            trainer.model.config.id2label = id2label
+        
+            # Test model for inference
+            config = BertConfig()
+            classifier = pipeline('sentiment-analysis', model='/tmp/cache/model/finetuned-clf-custom', config=config)
+            prediction = classifier('Covid pandemic is still raging in may parts of the world')
+            logger.info(prediction)
