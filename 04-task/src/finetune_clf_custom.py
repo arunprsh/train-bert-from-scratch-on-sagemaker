@@ -23,6 +23,7 @@ import logging
 import pickle
 import boto3
 import torch
+import errno
 import sys
 import os
 
@@ -79,10 +80,15 @@ if __name__ == '__main__':
     sm_session = sagemaker.Session(boto_session=boto_session)
     
     def download(s3_path: str, ebs_path: str, session: Session) -> None:
-        if not os.path.exists(ebs_path):
+        try:
+            if not os.path.exists(ebs_path):
+                os.makedirs(ebs_path, exist_ok=True)
+        except FileExistsError:
+            time.sleep(1)  # to avoid race condition between GPUs
             os.makedirs(ebs_path, exist_ok=True)
         S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
-        
+ 
+            
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
         S3Uploader.upload(ebs_path, s3_path, sagemaker_session=session)
