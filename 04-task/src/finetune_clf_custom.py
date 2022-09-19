@@ -79,19 +79,19 @@ if __name__ == '__main__':
     boto_session = boto3.session.Session(region_name=REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
     
+    
     def download(s3_path: str, ebs_path: str, session: Session) -> None:
         try:
             if not os.path.exists(ebs_path):
                 os.makedirs(ebs_path, exist_ok=True)
-        except FileExistsError:
-            time.sleep(1)  # to avoid race condition between GPUs
-            os.makedirs(ebs_path, exist_ok=True)
-        S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
- 
-            
+            S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
+        except FileExistsError:  # to avoid race condition between GPUs
+            logger.info('File Exists!')
+        
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
         S3Uploader.upload(ebs_path, s3_path, sagemaker_session=session)
+    
     
     # Load BERT MLM trained from scratch
     download(f's3://{S3_BUCKET}/model/custom/', '/tmp/cache/model/custom/', sm_session)
@@ -138,8 +138,10 @@ if __name__ == '__main__':
                       tokenizer=tokenizer, 
                       compute_metrics=compute_metrics)
     
-    # Evaluate 
+    # Train model
+    logger.info('Start Model Training')
     train_metrics = trainer.train()
+    logger.info('Stop Model Training')
     logger.info(f'Train metrics: {train_metrics}')
     
     # Evaluate validation set 
