@@ -1,7 +1,6 @@
 from sklearn.metrics import precision_recall_fscore_support
 from transformers import BertForSequenceClassification
 from sklearn.metrics import accuracy_score
-from sklearn.metrics import confusion_matrix
 from transformers import TrainingArguments
 from transformers import BertTokenizerFast
 from sagemaker.session import Session
@@ -116,9 +115,8 @@ if __name__ == '__main__':
         labels = pred.label_ids
         preds = pred.predictions.argmax(-1)
         precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='macro')
-        cm = confusion_matrix(labels, preds)
         acc = accuracy_score(labels, preds)
-        return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall, 'confusion_matrix': cm}
+        return {'accuracy': acc, 'f1-macro': f1, 'precision': precision, 'recall': recall}
     
     # Fine-tune 
     training_args = TrainingArguments(output_dir='/tmp/checkpoints', 
