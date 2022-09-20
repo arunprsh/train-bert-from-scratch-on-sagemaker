@@ -85,9 +85,12 @@ if __name__ == '__main__':
     logger.info(f'Tokenizer: {tokenizer}')
     
     def download(s3_path: str, ebs_path: str, session: Session) -> None:
-        if not os.path.exists(ebs_path):
-            os.makedirs(ebs_path, exist_ok=True)
-        S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
+        try:
+            if not os.path.exists(ebs_path):
+                os.makedirs(ebs_path, exist_ok=True)
+            S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
+        except FileExistsError:  # to avoid race condition between GPUs
+            logger.info('File Exists!')
         
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
@@ -105,9 +108,9 @@ if __name__ == '__main__':
     def compute_metrics(pred):
         labels = pred.label_ids
         preds = pred.predictions.argmax(-1)
-        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='micro')
+        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='macro')
         acc = accuracy_score(labels, preds)
-        return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall}
+        return {'accuracy': acc, 'f1-macro': f1, 'precision': precision, 'recall': recall}
     
     # Fine-tune 
     training_args = TrainingArguments(output_dir='/tmp/checkpoints', 
