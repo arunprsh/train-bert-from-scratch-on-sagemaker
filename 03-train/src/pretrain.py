@@ -3,6 +3,7 @@ from transformers import TrainingArguments
 from transformers import BertTokenizerFast
 from transformers import BertForMaskedLM
 from sagemaker.s3 import S3Downloader
+from sagemaker.session import Session
 from transformers import BertConfig
 from sagemaker.s3 import S3Uploader
 from transformers import pipeline 
@@ -82,18 +83,28 @@ if __name__ == '__main__':
     boto_session = boto3.session.Session(region_name=REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
     
+    
+    def download(s3_path: str, ebs_path: str, session: Session) -> None:
+        try:
+            if not os.path.exists(ebs_path):
+                os.makedirs(ebs_path, exist_ok=True)
+            S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
+        except FileExistsError:  # to avoid race condition between GPUs
+            logger.info('File Exists!')
+        
+        
+    def upload(ebs_path: str, s3_path: str, session: Session) -> None:
+        S3Uploader.upload(ebs_path, s3_path, sagemaker_session=session)
+        
+    
     # Download saved custom vocabulary file from S3 to local input path of the training cluster
     logger.info(f'Downloading custom vocabulary from [{S3_BUCKET}/data/vocab/] to [{args.input_dir}/vocab/]')
     path = os.path.join(f'{args.input_dir}', 'vocab')
-    
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-    
-    S3Downloader.download(f's3://{S3_BUCKET}/data/vocab/', f'{path}/', sagemaker_session=sm_session)
+    download(f's3://{S3_BUCKET}/data/vocab/', path, sm_session)
          
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/processed/', '/tmp/cache/data/processed/', sagemaker_session=sm_session)
+    download(f's3://{S3_BUCKET}/data/processed/', '/tmp/cache/data/processed/', sm_session)
     
     # Re-create BERT WordPiece tokenizer 
     logger.info(f'Re-creating BERT tokenizer using custom vocabulary from [{args.input_dir}/vocab/]')
@@ -153,7 +164,7 @@ if __name__ == '__main__':
         if os.path.exists('/tmp/cache/model/custom/pytorch_model.bin') and os.path.exists('/tmp/cache/model/custom/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/custom/]')
-            S3Uploader.upload('/tmp/cache/model/custom/', f's3://{S3_BUCKET}/model/custom/', sagemaker_session=sm_session)
+            upload('/tmp/cache/model/custom/', f's3://{S3_BUCKET}/model/custom/', sm_session)
 
             # Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
             logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
@@ -161,7 +172,7 @@ if __name__ == '__main__':
 
             # Copy vocab.txt to saved model artifacts location in S3
             logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
-            S3Uploader.upload(f'{path}/', f's3://{S3_BUCKET}/model/custom/', sagemaker_session=sm_session)
+            upload(f'{path}/', f's3://{S3_BUCKET}/model/custom/', sm_session)
 
             # Evaluate trained model for fill mask task
             logger.info('Create fill-mask task pipeline to evaluate trained MLM')

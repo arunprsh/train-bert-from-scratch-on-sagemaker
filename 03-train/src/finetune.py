@@ -80,13 +80,24 @@ if __name__ == '__main__':
     boto_session = boto3.session.Session(region_name=REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
     
-    path = '/tmp/cache/data/bert/processed/'
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
     
+    def download(s3_path: str, ebs_path: str, session: Session) -> None:
+        try:
+            if not os.path.exists(ebs_path):
+                os.makedirs(ebs_path, exist_ok=True)
+            S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
+        except FileExistsError:  # to avoid race condition between GPUs
+            logger.info('File Exists!')
+        
+        
+    def upload(ebs_path: str, s3_path: str, session: Session) -> None:
+        S3Uploader.upload(ebs_path, s3_path, sagemaker_session=session)
+        
+    
+    path = '/tmp/cache/data/bert/processed/'
     # Copy preprocessed datasets from S3 to local EBS volume (cache dir)
     logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/bert/processed/] to [{path}]')
-    S3Downloader.download(f's3://{S3_BUCKET}/data/bert/processed/', path, sagemaker_session=sm_session)
+    download(f's3://{S3_BUCKET}/data/bert/processed/', path, sm_session)
     
     
     # Re-create original BERT WordPiece tokenizer 
@@ -144,7 +155,7 @@ if __name__ == '__main__':
         if os.path.exists('/tmp/cache/model/finetuned/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned/]')
-            S3Uploader.upload('/tmp/cache/model/finetuned/', f's3://{S3_BUCKET}/model/finetuned/', sagemaker_session=sm_session)
+            upload('/tmp/cache/model/finetuned/', f's3://{S3_BUCKET}/model/finetuned/', sm_session)
 
             # Evaluate the trained model 
             logger.info('Create fill-mask task pipeline to evaluate trained MLM')
