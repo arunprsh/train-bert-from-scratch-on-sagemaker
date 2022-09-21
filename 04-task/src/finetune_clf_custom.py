@@ -19,6 +19,7 @@ import argparse
 import datasets
 import sklearn
 import logging 
+import tarfile
 import pickle
 import boto3
 import torch
@@ -150,9 +151,32 @@ if __name__ == '__main__':
     test_metrics = trainer.evaluate(eval_dataset=tokenized_data['test'])
     logger.info(f'Holdout metrics: {test_metrics}')
     
+    
+    def get_file_paths(directory: str) -> list:
+        file_paths = [] 
+        for root, directories, files in os.walk(directory):
+            for file_name in files:
+                file_path = os.path.join(root, file_name)
+                file_paths.append(file_path)  
+        return file_paths
+
+    
     if current_host == master_host:
         if not os.path.exists('/tmp/cache/model/finetuned-clf-custom'):
             os.makedirs('/tmp/cache/model/finetuned-clf-custom', exist_ok=True)
+            
+        # Download label mapping from s3 to local
+        download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
+    
+        # Load label mapping for inference
+        with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
+            label2id = pickle.load(f)
+        
+        id2label = dict((str(v), k) for k, v in label2id.items())
+        logger.info(f'Label mapping: {id2label}')
+    
+        trainer.model.config.label2id = label2id
+        trainer.model.config.id2label = id2label
     
         # Save model                     
         trainer.save_model('/tmp/cache/model/finetuned-clf-custom')
@@ -162,18 +186,18 @@ if __name__ == '__main__':
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf-custom/]')
             upload('/tmp/cache/model/finetuned-clf-custom', f's3://{S3_BUCKET}/model/finetuned-clf-custom', sm_session)  
             
-            # Download label mapping from s3 to local
-            download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
-    
-            # Load label mapping for inference
-            with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
-                label2id = pickle.load(f)
-        
-            id2label = dict((str(v), k) for k, v in label2id.items())
-            logger.info(f'Label mapping: {id2label}')
-    
-            trainer.model.config.label2id = label2id
-            trainer.model.config.id2label = id2label
+            tar = tarfile.open(f'/tmp/cache/model/finetuned-clf-custom/model.tar.gz', 'w:gz')
+            
+            file_paths = get_file_paths('/tmp/cache/model/finetuned-clf-custom')
+            logger.info(file_paths)
+            
+            for file_path in file_paths:
+                file_ = file_path.split('/')[-1]
+                if file_.endswith('h5') or file_.endswith('json'):
+                    tar.add(file_path, arcname=file_)
+            tar.close()
+            
+            upload('/tmp/cache/model/finetuned-clf-custom/model.tar.gz', f's3://{S3_BUCKET}/model/finetuned-clf-custom/', sm_session)
         
             # Test model for inference
             config = BertConfig()
