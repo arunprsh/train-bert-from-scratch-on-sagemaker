@@ -157,6 +157,23 @@ if __name__ == '__main__':
         return file_paths
     
     
+    def tar_artifacts(local_artifacts_path: str, tar_save_path: str) -> None:
+        if not os.path.exists(tar_save_path):
+            os.makedirs(tar_save_path, exist_ok=True)
+
+        tar = tarfile.open(f'{tar_save_path}/model.tar.gz', 'w:gz')
+        file_paths = get_file_paths(local_artifacts_path)
+        logger.info(file_paths)
+            
+        for file_path in file_paths:
+            file_ = file_path.split('/')[-1]
+            if file_.endswith('h5') or file_.endswith('json'):
+                tar.add(file_path, arcname=file_)
+                
+        tar.close()
+        
+    
+    
     if current_host == master_host:
         if not os.path.exists(LOCAL_MODEL_DIR):
             os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
@@ -182,19 +199,7 @@ if __name__ == '__main__':
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
             upload(LOCAL_MODEL_DIR, f's3://{S3_BUCKET}/model/finetuned-clf', sm_session) 
             
-            if not os.path.exists(f'{LOCAL_MODEL_DIR}/model-tar'):
-                os.makedirs(f'{LOCAL_MODEL_DIR}/model-tar', exist_ok=True)
-            
-            tar = tarfile.open(f'{LOCAL_MODEL_DIR}/model-tar/model.tar.gz', 'w:gz')
-            
-            file_paths = get_file_paths(LOCAL_MODEL_DIR)
-            logger.info(file_paths)
-            
-            for file_path in file_paths:
-                file_ = file_path.split('/')[-1]
-                if file_.endswith('h5') or file_.endswith('json'):
-                    tar.add(file_path, arcname=file_)
-            tar.close()
+            tar_artifacts(LOCAL_MODEL_DIR, f'{LOCAL_MODEL_DIR}/model-tar', 'model.tar.gz')
             
             # Upload model tar to S3
             logger.info(f'Copying saved model tar from local to [s3://{S3_BUCKET}/model/finetuned-clf/model-tar/]')
@@ -208,20 +213,7 @@ if __name__ == '__main__':
             # Save pipeline to local 
             classifier.save_pretrained(f'{LOCAL_MODEL_DIR}/pipeline')
             
-            # Tar pipeline artifacts 
-            if not os.path.exists(f'{LOCAL_MODEL_DIR}/pipeline-tar'):
-                os.makedirs(f'{LOCAL_MODEL_DIR}/pipeline-tar', exist_ok=True)
-                
-            tar = tarfile.open(f'{LOCAL_MODEL_DIR}/pipeline-tar/pipeline.tar.gz', 'w:gz')
-            
-            file_paths = get_file_paths(f'{LOCAL_MODEL_DIR}/pipeline')
-            logger.info(file_paths)
-            
-            for file_path in file_paths:
-                file_ = file_path.split('/')[-1]
-                if file_.endswith('h5') or file_.endswith('json'):
-                    tar.add(file_path, arcname=file_)
-            tar.close()
+            tar_artifacts(f'{LOCAL_MODEL_DIR}/pipeline', f'{LOCAL_MODEL_DIR}/pipeline-tar', 'pipeline.tar.gz')
             
             # Upload pipeline tar to S3 
             logger.info(f'Copying saved pipeline tar from local to [s3://{S3_BUCKET}/model/finetuned-clf/pipeline-tar/]')
