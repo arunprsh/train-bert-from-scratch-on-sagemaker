@@ -18,6 +18,7 @@ import argparse
 import datasets
 import sklearn
 import logging 
+import tarfile
 import pickle
 import boto3
 import torch
@@ -142,10 +143,33 @@ if __name__ == '__main__':
     test_metrics = trainer.evaluate(eval_dataset=tokenized_data['test'])
     logger.info(f'Holdout metrics: {test_metrics}')
     
+    
+    def get_file_paths(directory: str) -> list:
+        file_paths = [] 
+        for root, directories, files in os.walk(directory):
+            for file_name in files:
+                file_path = os.path.join(root, file_name)
+                file_paths.append(file_path)  
+        return file_paths
+    
+    
     if current_host == master_host:
         if not os.path.exists('/tmp/cache/model/finetuned-clf'):
             os.makedirs('/tmp/cache/model/finetuned-clf', exist_ok=True)
+        
+        # Download label mapping from s3 to local
+        download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
     
+        # Load label mapping for inference
+        with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
+            label2id = pickle.load(f)
+        
+        id2label = dict((str(v), k) for k, v in label2id.items())
+        logger.info(f'Label mapping: {id2label}')
+    
+        trainer.model.config.label2id = label2id
+        trainer.model.config.id2label = id2label
+        
         # Save model                     
         trainer.save_model('/tmp/cache/model/finetuned-clf')
 
@@ -154,20 +178,41 @@ if __name__ == '__main__':
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
             upload('/tmp/cache/model/finetuned-clf', f's3://{S3_BUCKET}/model/finetuned-clf', sm_session)  
             
-            # Download label mapping from s3 to local
-            download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
-    
-            # Load label mapping for inference
-            with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
-                label2id = pickle.load(f)
-        
-            id2label = dict((str(v), k) for k, v in label2id.items())
-            logger.info(f'Label mapping: {id2label}')
-    
-            trainer.model.config.label2id = label2id
-            trainer.model.config.id2label = id2label
+            tar = tarfile.open(f'/tmp/cache/model/finetuned-clf/model-tar/model.tar.gz', 'w:gz')
+            
+            file_paths = get_file_paths('/tmp/cache/model/finetuned-clf')
+            logger.info(file_paths)
+            
+            for file_path in file_paths:
+                file_ = file_path.split('/')[-1]
+                if file_.endswith('h5') or file_.endswith('json'):
+                    tar.add(file_path, arcname=file_)
+            tar.close()
+            
+            # Upload model tar to S3
+            logger.info(f'Copying saved model tar from local to [s3://{S3_BUCKET}/model/finetuned-clf/model-tar/]')
+            upload('/tmp/cache/model/finetuned-clf/model-tar', f's3://{S3_BUCKET}/model/finetuned-clf/model-tar', sm_session) 
         
             # Test model for inference
             classifier = pipeline('sentiment-analysis', model='/tmp/cache/model/finetuned-clf')
             prediction = classifier('Covid pandemic is still raging in may parts of the world')
             logger.info(prediction)
+            
+            # Save pipeline to local 
+            classifier.save_pretrained('/tmp/cache/model/finetune-clf/pipeline')
+            
+            # Tar pipeline artifacts 
+            tar = tarfile.open(f'/tmp/cache/model/finetuned-clf/pipeline-tar/pipeline.tar.gz', 'w:gz')
+            
+            file_paths = get_file_paths('/tmp/cache/model/finetuned-clf/pipeline')
+            logger.info(file_paths)
+            
+            for file_path in file_paths:
+                file_ = file_path.split('/')[-1]
+                if file_.endswith('h5') or file_.endswith('json'):
+                    tar.add(file_path, arcname=file_)
+            tar.close()
+            
+            # Upload pipeline tar to S3 
+            logger.info(f'Copying saved pipeline tar from local to [s3://{S3_BUCKET}/model/finetuned-clf/pipeline-tar/]')
+            upload('/tmp/cache/model/finetuned-clf/pipeline-tar', f's3://{S3_BUCKET}/model/finetuned-clf/pipeline-tar', sm_session)
