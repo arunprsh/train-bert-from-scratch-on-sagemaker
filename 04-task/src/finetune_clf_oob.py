@@ -73,6 +73,10 @@ if __name__ == '__main__':
     SAVE_STEPS = 10000
     SAVE_TOTAL_LIMIT = 2
     
+    LOCAL_DATA_DIR = '/tmp/cache/data/bert/processed-clf'
+    LOCAL_MODEL_DIR = '/tmp/cache/model/finetuned-clf'
+    LOCAL_LABEL_DIR = '/tmp/cache/labels'
+    
     # Setup SageMaker Session for S3Downloader and S3Uploader 
     boto_session = boto3.session.Session(region_name=REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
@@ -98,11 +102,11 @@ if __name__ == '__main__':
         S3Uploader.upload(ebs_path, s3_path, sagemaker_session=session)
     
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/bert/processed-clf/]')
-    download(f's3://{S3_BUCKET}/data/bert/processed-clf/', '/tmp/cache/data/bert/processed-clf/', sm_session)
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [{LOCAL_DATA_DIR}/]')
+    download(f's3://{S3_BUCKET}/data/bert/processed-clf/', f'{LOCAL_DATA_DIR}/', sm_session)
     
     # Load tokenized dataset 
-    tokenized_data = datasets.load_from_disk('/tmp/cache/data/bert/processed-clf/')
+    tokenized_data = datasets.load_from_disk(f'{LOCAL_DATA_DIR}/')
     logger.info(f'Tokenized data: {tokenized_data}')
     
     # Define compute metrics
@@ -154,14 +158,14 @@ if __name__ == '__main__':
     
     
     if current_host == master_host:
-        if not os.path.exists('/tmp/cache/model/finetuned-clf'):
-            os.makedirs('/tmp/cache/model/finetuned-clf', exist_ok=True)
+        if not os.path.exists(LOCAL_MODEL_DIR):
+            os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
         
         # Download label mapping from s3 to local
-        download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
+        download(f's3://{S3_BUCKET}/data/labels/', f'{LOCAL_LABEL_DIR}/', sm_session)
     
         # Load label mapping for inference
-        with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
+        with open(f'{LOCAL_LABEL_DIR}/label_map.pkl', 'rb') as f:
             label2id = pickle.load(f)
         
         id2label = dict((str(v), k) for k, v in label2id.items())
@@ -171,16 +175,19 @@ if __name__ == '__main__':
         trainer.model.config.id2label = id2label
         
         # Save model                     
-        trainer.save_model('/tmp/cache/model/finetuned-clf')
+        trainer.save_model(LOCAL_MODEL_DIR)
 
-        if os.path.exists('/tmp/cache/model/finetuned-clf/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf/config.json'):
+        if os.path.exists(f'{LOCAL_MODEL_DIR}/pytorch_model.bin') and os.path.exists(f'{LOCAL_MODEL_DIR}/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
-            upload('/tmp/cache/model/finetuned-clf', f's3://{S3_BUCKET}/model/finetuned-clf', sm_session)  
+            upload(LOCAL_MODEL_DIR, f's3://{S3_BUCKET}/model/finetuned-clf', sm_session) 
             
-            tar = tarfile.open(f'/tmp/cache/model/finetuned-clf/model-tar/model.tar.gz', 'w:gz')
+            if not os.path.exists(f'{LOCAL_MODEL_DIR}/model-tar'):
+                os.makedirs(f'{LOCAL_MODEL_DIR}/model-tar', exist_ok=True)
             
-            file_paths = get_file_paths('/tmp/cache/model/finetuned-clf')
+            tar = tarfile.open(f'{LOCAL_MODEL_DIR}/model-tar/model.tar.gz', 'w:gz')
+            
+            file_paths = get_file_paths(LOCAL_MODEL_DIR)
             logger.info(file_paths)
             
             for file_path in file_paths:
@@ -191,7 +198,7 @@ if __name__ == '__main__':
             
             # Upload model tar to S3
             logger.info(f'Copying saved model tar from local to [s3://{S3_BUCKET}/model/finetuned-clf/model-tar/]')
-            upload('/tmp/cache/model/finetuned-clf/model-tar', f's3://{S3_BUCKET}/model/finetuned-clf/model-tar', sm_session) 
+            upload(f'{LOCAL_MODEL_DIR}/model-tar', f's3://{S3_BUCKET}/model/finetuned-clf/model-tar', sm_session) 
         
             # Test model for inference
             classifier = pipeline('sentiment-analysis', model='/tmp/cache/model/finetuned-clf')
@@ -199,12 +206,15 @@ if __name__ == '__main__':
             logger.info(prediction)
             
             # Save pipeline to local 
-            classifier.save_pretrained('/tmp/cache/model/finetune-clf/pipeline')
+            classifier.save_pretrained(f'{LOCAL_MODEL_DIR}/pipeline')
             
             # Tar pipeline artifacts 
-            tar = tarfile.open(f'/tmp/cache/model/finetuned-clf/pipeline-tar/pipeline.tar.gz', 'w:gz')
+            if not os.path.exists(f'{LOCAL_MODEL_DIR}/pipeline-tar'):
+                os.makedirs(f'{LOCAL_MODEL_DIR}/pipeline-tar', exist_ok=True)
+                
+            tar = tarfile.open(f'{LOCAL_MODEL_DIR}/pipeline-tar/pipeline.tar.gz', 'w:gz')
             
-            file_paths = get_file_paths('/tmp/cache/model/finetuned-clf/pipeline')
+            file_paths = get_file_paths(f'{LOCAL_MODEL_DIR}/pipeline')
             logger.info(file_paths)
             
             for file_path in file_paths:
@@ -215,4 +225,4 @@ if __name__ == '__main__':
             
             # Upload pipeline tar to S3 
             logger.info(f'Copying saved pipeline tar from local to [s3://{S3_BUCKET}/model/finetuned-clf/pipeline-tar/]')
-            upload('/tmp/cache/model/finetuned-clf/pipeline-tar', f's3://{S3_BUCKET}/model/finetuned-clf/pipeline-tar', sm_session)
+            upload(f'{LOCAL_MODEL_DIR}/pipeline-tar', f's3://{S3_BUCKET}/model/finetuned-clf/pipeline-tar', sm_session)
