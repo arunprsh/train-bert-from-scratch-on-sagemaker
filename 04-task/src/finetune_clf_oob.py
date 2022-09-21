@@ -157,11 +157,11 @@ if __name__ == '__main__':
         return file_paths
     
     
-    def tar_artifacts(local_artifacts_path: str, tar_save_path: str) -> None:
+    def tar_artifacts(local_artifacts_path: str, tar_save_path: str, tar_name: str) -> None:
         if not os.path.exists(tar_save_path):
             os.makedirs(tar_save_path, exist_ok=True)
 
-        tar = tarfile.open(f'{tar_save_path}/model.tar.gz', 'w:gz')
+        tar = tarfile.open(f'{tar_save_path}/{tar_name}', 'w:gz')
         file_paths = get_file_paths(local_artifacts_path)
         logger.info(file_paths)
             
@@ -178,10 +178,15 @@ if __name__ == '__main__':
         if not os.path.exists(LOCAL_MODEL_DIR):
             os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
         
+        
+        if not os.path.exists(LOCAL_LABEL_DIR):
+            os.makedirs(LOCAL_LABEL_DIR, exist_ok=True)
+            
         # Download label mapping from s3 to local
         download(f's3://{S3_BUCKET}/data/labels/', f'{LOCAL_LABEL_DIR}/', sm_session)
     
         # Load label mapping for inference
+        
         with open(f'{LOCAL_LABEL_DIR}/label_map.pkl', 'rb') as f:
             label2id = pickle.load(f)
         
