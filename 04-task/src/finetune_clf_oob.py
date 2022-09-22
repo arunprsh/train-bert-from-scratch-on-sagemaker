@@ -164,14 +164,13 @@ if __name__ == '__main__':
         if not os.path.exists(tar_save_path):
             os.makedirs(tar_save_path, exist_ok=True)
         tar = tarfile.open(f'{tar_save_path}/{tar_name}', 'w:gz')
-        file_paths = get_file_paths(local_artifacts_path)
-        logger.info(file_paths)   
+        file_paths = get_file_paths(local_artifacts_path)  
         for file_path in file_paths:
             file_ = file_path.split('/')[-1]
             try:
                 tar.add(file_path, arcname=file_) 
-            except Exception:
-                logger.info(f'Error: {file_path} and {file_}')
+            except OSError:
+                logger.info('Ignoring OSErrors during tar creation.')
         tar.close()
     
     if current_host == master_host:
@@ -185,7 +184,6 @@ if __name__ == '__main__':
         download(f's3://{S3_BUCKET}/data/labels/', f'{LOCAL_LABEL_DIR}/', sm_session)
     
         # Load label mapping for inference
-        
         with open(f'{LOCAL_LABEL_DIR}/label_map.pkl', 'rb') as f:
             label2id = pickle.load(f)
         
@@ -209,8 +207,6 @@ if __name__ == '__main__':
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
             upload(LOCAL_MODEL_DIR, f's3://{S3_BUCKET}/model/finetuned-clf', sm_session) 
-            
-            logger.info(f'>>>>{os.listdir(LOCAL_MODEL_DIR)}')
         
             # Test model for inference
             classifier = pipeline('sentiment-analysis', model=LOCAL_MODEL_DIR)
