@@ -166,6 +166,18 @@ if __name__ == '__main__':
                 file_path = os.path.join(root, file_name)
                 file_paths.append(file_path)  
         return file_paths
+    
+    
+    def tar_artifacts(local_artifacts_path: str, tar_save_path: str, tar_name: str) -> None:
+        if not os.path.exists(tar_save_path):
+            os.makedirs(tar_save_path, exist_ok=True)
+        tar = tarfile.open(f'{tar_save_path}/{tar_name}', 'w:gz')
+        file_paths = get_file_paths(local_artifacts_path)
+        logger.info(file_paths)   
+        for file_path in file_paths:
+            file_ = file_path.split('/')[-1]
+            tar.add(file_path, arcname=file_)    
+        tar.close()
 
     
     if current_host == master_host:

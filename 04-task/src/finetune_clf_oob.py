@@ -22,6 +22,7 @@ import tarfile
 import pickle
 import boto3
 import torch
+import time
 import sys
 import os
 
@@ -167,8 +168,10 @@ if __name__ == '__main__':
         logger.info(file_paths)   
         for file_path in file_paths:
             file_ = file_path.split('/')[-1]
-            if file_.endswith('h5') or file_.endswith('json'):
-                tar.add(file_path, arcname=file_)    
+            try:
+                tar.add(file_path, arcname=file_) 
+            except Exception:
+                logger.info(f'Error: {file_path} and {file_}')
         tar.close()
     
     if current_host == master_host:
@@ -192,13 +195,22 @@ if __name__ == '__main__':
         trainer.model.config.label2id = label2id
         trainer.model.config.id2label = id2label
         
-        # Save finetuned model to local                    
+        # Save finetuned model to local  
         trainer.save_model(LOCAL_MODEL_DIR)
-
-        if os.path.exists(f'{LOCAL_MODEL_DIR}/pytorch_model.bin') and os.path.exists(f'{LOCAL_MODEL_DIR}/config.json'):
+        
+        if os.path.exists(f'{LOCAL_MODEL_DIR}/pytorch_model.bin') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/training_args.bin') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/config.json') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/special_tokens_map.json') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/tokenizer_config.json') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/tokenizer.json') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/vocab.txt'):
+            
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
             upload(LOCAL_MODEL_DIR, f's3://{S3_BUCKET}/model/finetuned-clf', sm_session) 
+            
+            logger.info(f'>>>>{os.listdir(LOCAL_MODEL_DIR)}')
         
             # Test model for inference
             classifier = pipeline('sentiment-analysis', model=LOCAL_MODEL_DIR)
