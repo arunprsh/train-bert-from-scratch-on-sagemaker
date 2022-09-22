@@ -75,6 +75,12 @@ if __name__ == '__main__':
     SAVE_STEPS = 10000
     SAVE_TOTAL_LIMIT = 2
     
+    LOCAL_DATA_DIR = '/tmp/cache/data/processed-clf'
+    LOCAL_MLM_DIR = '/tmp/cache/model/custom'
+    LOCAL_VOCAB_DIR = '/tmp/cache/vocab'
+    LOCAL_MODEL_DIR = '/tmp/cache/model/finetuned-clf-custom'
+    LOCAL_LABEL_DIR = '/tmp/cache/labels'
+    
     # Setup SageMaker Session for S3Downloader and S3Uploader 
     boto_session = boto3.session.Session(region_name=REGION)
     sm_session = sagemaker.Session(boto_session=boto_session)
@@ -86,29 +92,30 @@ if __name__ == '__main__':
                 os.makedirs(ebs_path, exist_ok=True)
             S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
         except FileExistsError:  # to avoid race condition between GPUs
-            logger.info('File Exists!')
+            logger.info('Ignoring FileExistsError to avoid I/O race conditions.')
+        except FileNotFoundError:
+            logger.info('Ignoring FileNotFoundError to avoid I/O race conditions.')
         
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
         S3Uploader.upload(ebs_path, s3_path, sagemaker_session=session)
     
-    
     # Load BERT MLM trained from scratch
-    download(f's3://{S3_BUCKET}/model/custom/', '/tmp/cache/model/custom/', sm_session)
-    model = BertForSequenceClassification.from_pretrained('/tmp/cache/model/custom', num_labels=5,  force_download=True)
+    download(f's3://{S3_BUCKET}/model/custom/', f'{LOCAL_MLM_DIR}/', sm_session)
+    model = BertForSequenceClassification.from_pretrained(LOCAL_MLM_DIR, num_labels=5,  force_download=True)
     
     # Re-create tokenizer trained from scratch
     logger.info('Re-creating original BERT tokenizer')
-    download(f's3://{S3_BUCKET}/data/vocab/', '/tmp/cache/vocab/', sm_session)
-    tokenizer = BertTokenizerFast.from_pretrained('/tmp/cache/vocab/')
+    download(f's3://{S3_BUCKET}/data/vocab/', f'{LOCAL_VOCAB_DIR}/', sm_session)
+    tokenizer = BertTokenizerFast.from_pretrained(f'{LOCAL_VOCAB_DIR}/')
     logger.info(f'Tokenizer: {tokenizer}')
     
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed-clf/] to [/tmp/cache/data/processed-clf/]')
-    download(f's3://{S3_BUCKET}/data/processed-clf/', '/tmp/cache/data/processed-clf/', sm_session)
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed-clf/] to [{LOCAL_DATA_DIR}/]')
+    download(f's3://{S3_BUCKET}/data/processed-clf/', f'{LOCAL_DATA_DIR}/', sm_session)
     
     # Load tokenized dataset 
-    tokenized_data = datasets.load_from_disk('/tmp/cache/data/processed-clf/')
+    tokenized_data = datasets.load_from_disk(f'{LOCAL_DATA_DIR}/')
     logger.info(f'Tokenized data: {tokenized_data}')
     
     # Define compute metrics
@@ -117,7 +124,7 @@ if __name__ == '__main__':
         preds = pred.predictions.argmax(-1)
         precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='macro')
         acc = accuracy_score(labels, preds)
-        return {'accuracy': acc, 'f1-macro': f1, 'precision': precision, 'recall': recall}
+        return {'accuracy': acc, 'f1_macro': f1, 'precision': precision, 'recall': recall}
     
     # Fine-tune 
     training_args = TrainingArguments(output_dir='/tmp/checkpoints', 
@@ -162,14 +169,14 @@ if __name__ == '__main__':
 
     
     if current_host == master_host:
-        if not os.path.exists('/tmp/cache/model/finetuned-clf-custom'):
-            os.makedirs('/tmp/cache/model/finetuned-clf-custom', exist_ok=True)
+        if not os.path.exists(LOCAL_MODEL_DIR):
+            os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
             
         # Download label mapping from s3 to local
-        download(f's3://{S3_BUCKET}/data/labels/', '/tmp/cache/labels/', sm_session)
+        download(f's3://{S3_BUCKET}/data/labels/', f'{LOCAL_LABEL_DIR}/', sm_session)
     
         # Load label mapping for inference
-        with open('/tmp/cache/labels/label_map.pkl', 'rb') as f:
+        with open(f'{LOCAL_LABEL_DIR}/label_map.pkl', 'rb') as f:
             label2id = pickle.load(f)
         
         id2label = dict((str(v), k) for k, v in label2id.items())
@@ -179,16 +186,16 @@ if __name__ == '__main__':
         trainer.model.config.id2label = id2label
     
         # Save model                     
-        trainer.save_model('/tmp/cache/model/finetuned-clf-custom')
+        trainer.save_model(LOCAL_MODEL_DIR)
 
-        if os.path.exists('/tmp/cache/model/finetuned-clf-custom/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned-clf-custom/config.json'):
+        if os.path.exists(f'{LOCAL_MODEL_DIR}/pytorch_model.bin') and os.path.exists(f'{LOCAL_MODEL_DIR}/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf-custom/]')
-            upload('/tmp/cache/model/finetuned-clf-custom', f's3://{S3_BUCKET}/model/finetuned-clf-custom', sm_session)  
+            upload(LOCAL_MODEL_DIR, f's3://{S3_BUCKET}/model/finetuned-clf-custom', sm_session)  
             
-            tar = tarfile.open(f'/tmp/cache/model/finetuned-clf-custom/model.tar.gz', 'w:gz')
+            tar = tarfile.open(f'{LOCAL_MODEL_DIR}/model.tar.gz', 'w:gz')
             
-            file_paths = get_file_paths('/tmp/cache/model/finetuned-clf-custom')
+            file_paths = get_file_paths(LOCAL_MODEL_DIR)
             logger.info(file_paths)
             
             for file_path in file_paths:
@@ -197,10 +204,10 @@ if __name__ == '__main__':
                     tar.add(file_path, arcname=file_)
             tar.close()
             
-            upload('/tmp/cache/model/finetuned-clf-custom/model.tar.gz', f's3://{S3_BUCKET}/model/finetuned-clf-custom/', sm_session)
+            upload(f'{LOCAL_MODEL_DIR}/model.tar.gz', f's3://{S3_BUCKET}/model/finetuned-clf-custom/', sm_session)
         
             # Test model for inference
             config = BertConfig()
-            classifier = pipeline('sentiment-analysis', model='/tmp/cache/model/finetuned-clf-custom', config=config)
+            classifier = pipeline('sentiment-analysis', model=LOCAL_MODEL_DIR, config=config)
             prediction = classifier('Covid pandemic is still raging in may parts of the world')
             logger.info(prediction)

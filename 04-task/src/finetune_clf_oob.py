@@ -95,9 +95,9 @@ if __name__ == '__main__':
                 os.makedirs(ebs_path, exist_ok=True)
             S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
         except FileExistsError:  # to avoid race condition between GPUs
-            logger.info('ignoring FileExistsError')
+            logger.info('Ignoring FileExistsError to avoid I/O race conditions.')
         except FileNotFoundError:
-            logger.info('ignoring FileNotFoundError')
+            logger.info('Ignoring FileNotFoundError to avoid I/O race conditions.')
         
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
@@ -117,7 +117,7 @@ if __name__ == '__main__':
         preds = pred.predictions.argmax(-1)
         precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='macro')
         acc = accuracy_score(labels, preds)
-        return {'accuracy': acc, 'f1-macro': f1, 'precision': precision, 'recall': recall}
+        return {'accuracy': acc, 'f1_macro': f1, 'precision': precision, 'recall': recall}
     
     # Fine-tune 
     training_args = TrainingArguments(output_dir='/tmp/checkpoints', 
@@ -162,24 +162,18 @@ if __name__ == '__main__':
     def tar_artifacts(local_artifacts_path: str, tar_save_path: str, tar_name: str) -> None:
         if not os.path.exists(tar_save_path):
             os.makedirs(tar_save_path, exist_ok=True)
-
         tar = tarfile.open(f'{tar_save_path}/{tar_name}', 'w:gz')
         file_paths = get_file_paths(local_artifacts_path)
-        logger.info(file_paths)
-            
+        logger.info(file_paths)   
         for file_path in file_paths:
             file_ = file_path.split('/')[-1]
             if file_.endswith('h5') or file_.endswith('json'):
-                tar.add(file_path, arcname=file_)
-                
+                tar.add(file_path, arcname=file_)    
         tar.close()
-        
-    
     
     if current_host == master_host:
         if not os.path.exists(LOCAL_MODEL_DIR):
             os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
-        
         
         if not os.path.exists(LOCAL_LABEL_DIR):
             os.makedirs(LOCAL_LABEL_DIR, exist_ok=True)
@@ -198,7 +192,7 @@ if __name__ == '__main__':
         trainer.model.config.label2id = label2id
         trainer.model.config.id2label = id2label
         
-        # Save model                     
+        # Save finetuned model to local                    
         trainer.save_model(LOCAL_MODEL_DIR)
 
         if os.path.exists(f'{LOCAL_MODEL_DIR}/pytorch_model.bin') and os.path.exists(f'{LOCAL_MODEL_DIR}/config.json'):
@@ -220,7 +214,6 @@ if __name__ == '__main__':
             
             # Save pipeline to local 
             classifier.save_pretrained(f'{LOCAL_MODEL_DIR}/pipeline')
-            
             
             # Save pipeline as tar to local
             tar_artifacts(f'{LOCAL_MODEL_DIR}/pipeline', f'{LOCAL_MODEL_DIR}/pipeline-tar', 'pipeline.tar.gz')
