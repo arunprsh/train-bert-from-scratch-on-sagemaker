@@ -95,7 +95,9 @@ if __name__ == '__main__':
                 os.makedirs(ebs_path, exist_ok=True)
             S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
         except FileExistsError:  # to avoid race condition between GPUs
-            logger.info('File Exists!')
+            logger.info('ignoring FileExistsError')
+        except FileNotFoundError:
+            logger.info('ignoring FileNotFoundError')
         
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
@@ -203,23 +205,26 @@ if __name__ == '__main__':
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf/]')
             upload(LOCAL_MODEL_DIR, f's3://{S3_BUCKET}/model/finetuned-clf', sm_session) 
-            
-            tar_artifacts(LOCAL_MODEL_DIR, f'{LOCAL_MODEL_DIR}/model-tar', 'model.tar.gz')
-            
-            # Upload model tar to S3
-            logger.info(f'Copying saved model tar from local to [s3://{S3_BUCKET}/model/finetuned-clf/model-tar/]')
-            upload(f'{LOCAL_MODEL_DIR}/model-tar', f's3://{S3_BUCKET}/model/finetuned-clf/model-tar', sm_session) 
         
             # Test model for inference
-            classifier = pipeline('sentiment-analysis', model='/tmp/cache/model/finetuned-clf')
+            classifier = pipeline('sentiment-analysis', model=LOCAL_MODEL_DIR)
             prediction = classifier('Covid pandemic is still raging in may parts of the world')
             logger.info(prediction)
+            
+            # Save model as tar to local
+            tar_artifacts(LOCAL_MODEL_DIR, f'{LOCAL_MODEL_DIR}/model-tar', 'model.tar.gz')
+            
+            # Upload model tar to S3 from local
+            logger.info(f'Copying saved model tar from local to [s3://{S3_BUCKET}/model/finetuned-clf/model-tar/]')
+            upload(f'{LOCAL_MODEL_DIR}/model-tar', f's3://{S3_BUCKET}/model/finetuned-clf/model-tar', sm_session) 
             
             # Save pipeline to local 
             classifier.save_pretrained(f'{LOCAL_MODEL_DIR}/pipeline')
             
+            
+            # Save pipeline as tar to local
             tar_artifacts(f'{LOCAL_MODEL_DIR}/pipeline', f'{LOCAL_MODEL_DIR}/pipeline-tar', 'pipeline.tar.gz')
             
-            # Upload pipeline tar to S3 
+            # Upload pipeline tar to S3 from local
             logger.info(f'Copying saved pipeline tar from local to [s3://{S3_BUCKET}/model/finetuned-clf/pipeline-tar/]')
             upload(f'{LOCAL_MODEL_DIR}/pipeline-tar', f's3://{S3_BUCKET}/model/finetuned-clf/pipeline-tar', sm_session)
