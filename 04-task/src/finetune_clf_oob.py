@@ -22,7 +22,6 @@ import tarfile
 import pickle
 import boto3
 import torch
-import time
 import sys
 import os
 

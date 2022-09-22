@@ -145,9 +145,7 @@ if __name__ == '__main__':
                       compute_metrics=compute_metrics)
     
     # Train model
-    logger.info('Start Model Training')
     train_metrics = trainer.train()
-    logger.info('Stop Model Training')
     logger.info(f'Train metrics: {train_metrics}')
     
     # Evaluate validation set 
@@ -172,17 +170,22 @@ if __name__ == '__main__':
         if not os.path.exists(tar_save_path):
             os.makedirs(tar_save_path, exist_ok=True)
         tar = tarfile.open(f'{tar_save_path}/{tar_name}', 'w:gz')
-        file_paths = get_file_paths(local_artifacts_path)
-        logger.info(file_paths)   
+        file_paths = get_file_paths(local_artifacts_path)  
         for file_path in file_paths:
             file_ = file_path.split('/')[-1]
-            tar.add(file_path, arcname=file_)    
+            try:
+                tar.add(file_path, arcname=file_) 
+            except OSError:
+                logger.info('Ignoring OSErrors during tar creation.')
         tar.close()
 
     
     if current_host == master_host:
         if not os.path.exists(LOCAL_MODEL_DIR):
             os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
+            
+        if not os.path.exists(LOCAL_LABEL_DIR):
+            os.makedirs(LOCAL_LABEL_DIR, exist_ok=True)
             
         # Download label mapping from s3 to local
         download(f's3://{S3_BUCKET}/data/labels/', f'{LOCAL_LABEL_DIR}/', sm_session)
@@ -200,26 +203,36 @@ if __name__ == '__main__':
         # Save model                     
         trainer.save_model(LOCAL_MODEL_DIR)
 
-        if os.path.exists(f'{LOCAL_MODEL_DIR}/pytorch_model.bin') and os.path.exists(f'{LOCAL_MODEL_DIR}/config.json'):
+        if os.path.exists(f'{LOCAL_MODEL_DIR}/pytorch_model.bin') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/training_args.bin') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/config.json') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/special_tokens_map.json') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/tokenizer_config.json') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/tokenizer.json') and \
+            os.path.exists(f'{LOCAL_MODEL_DIR}/vocab.txt'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned-clf-custom/]')
             upload(LOCAL_MODEL_DIR, f's3://{S3_BUCKET}/model/finetuned-clf-custom', sm_session)  
-            
-            tar = tarfile.open(f'{LOCAL_MODEL_DIR}/model.tar.gz', 'w:gz')
-            
-            file_paths = get_file_paths(LOCAL_MODEL_DIR)
-            logger.info(file_paths)
-            
-            for file_path in file_paths:
-                file_ = file_path.split('/')[-1]
-                if file_.endswith('h5') or file_.endswith('json'):
-                    tar.add(file_path, arcname=file_)
-            tar.close()
-            
-            upload(f'{LOCAL_MODEL_DIR}/model.tar.gz', f's3://{S3_BUCKET}/model/finetuned-clf-custom/', sm_session)
         
             # Test model for inference
             config = BertConfig()
             classifier = pipeline('sentiment-analysis', model=LOCAL_MODEL_DIR, config=config)
             prediction = classifier('Covid pandemic is still raging in may parts of the world')
             logger.info(prediction)
+            
+            # Save model as tar to local
+            tar_artifacts(LOCAL_MODEL_DIR, f'{LOCAL_MODEL_DIR}/model-tar', 'model.tar.gz')
+            
+             # Upload model tar to S3 from local
+            logger.info(f'Copying saved model tar from local to [s3://{S3_BUCKET}/model/finetuned-clf-custom/model-tar/]')
+            upload(f'{LOCAL_MODEL_DIR}/model-tar', f's3://{S3_BUCKET}/model/finetuned-clf-custom/model-tar', sm_session) 
+            
+            # Save pipeline to local 
+            classifier.save_pretrained(f'{LOCAL_MODEL_DIR}/pipeline')
+            
+            # Save pipeline as tar to local
+            tar_artifacts(f'{LOCAL_MODEL_DIR}/pipeline', f'{LOCAL_MODEL_DIR}/pipeline-tar', 'pipeline.tar.gz')
+            
+            # Upload pipeline tar to S3 from local
+            logger.info(f'Copying saved pipeline tar from local to [s3://{S3_BUCKET}/model/finetuned-clf-custom/pipeline-tar/]')
+            upload(f'{LOCAL_MODEL_DIR}/pipeline-tar', f's3://{S3_BUCKET}/model/finetuned-clf-custom/pipeline-tar', sm_session)
