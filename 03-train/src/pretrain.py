@@ -77,6 +77,9 @@ if __name__ == '__main__':
     SAVE_STEPS = 10000
     SAVE_TOTAL_LIMIT = 2
     
+    LOCAL_DATA_DIR = '/tmp/cache/data/processed'
+    LOCAL_MODEL_DIR = '/tmp/cache/model/custom'
+    
     config = BertConfig()
     
     # Setup SageMaker Session for S3Downloader and S3Uploader 
@@ -90,7 +93,9 @@ if __name__ == '__main__':
                 os.makedirs(ebs_path, exist_ok=True)
             S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
         except FileExistsError:  # to avoid race condition between GPUs
-            logger.info('File Exists!')
+            logger.info('Ignoring FileExistsError to avoid I/O race conditions.')
+        except FileNotFoundError:
+            logger.info('Ignoring FileNotFoundError to avoid I/O race conditions.')
         
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
@@ -103,8 +108,8 @@ if __name__ == '__main__':
     download(f's3://{S3_BUCKET}/data/vocab/', path, sm_session)
          
     # Download preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [/tmp/cache/data/processed/]')
-    download(f's3://{S3_BUCKET}/data/processed/', '/tmp/cache/data/processed/', sm_session)
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/processed/] to [{LOCAL_DATA_DIR}/]')
+    download(f's3://{S3_BUCKET}/data/processed/', f'{LOCAL_DATA_DIR}/', sm_session)
     
     # Re-create BERT WordPiece tokenizer 
     logger.info(f'Re-creating BERT tokenizer using custom vocabulary from [{args.input_dir}/vocab/]')
@@ -114,7 +119,7 @@ if __name__ == '__main__':
     logger.info(f'Tokenizer: {tokenizer}')
 
     # Read dataset 
-    chunked_datasets = datasets.load_from_disk('/tmp/cache/data/processed')
+    chunked_datasets = datasets.load_from_disk(LOCAL_DATA_DIR)
     logger.info(f'Chunked datasets: {chunked_datasets}')
     
     # Create data collator
@@ -154,21 +159,21 @@ if __name__ == '__main__':
     
     if current_host == master_host:
         
-        if not os.path.exists('/tmp/cache/model/custom'):
-            os.makedirs('/tmp/cache/model/custom', exist_ok=True)
+        if not os.path.exists(LOCAL_MODEL_DIR):
+            os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
             
         # Save trained model to local model directory
         logger.info(f'Saving trained MLM to [/tmp/cache/model/custom/]')
-        trainer.save_model('/tmp/cache/model/custom')
+        trainer.save_model(LOCAL_MODEL_DIR)
         
-        if os.path.exists('/tmp/cache/model/custom/pytorch_model.bin') and os.path.exists('/tmp/cache/model/custom/config.json'):
+        if os.path.exists(f'{LOCAL_MODEL_DIR}/pytorch_model.bin') and os.path.exists(f'{LOCAL_MODEL_DIR}/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/custom/]')
-            upload('/tmp/cache/model/custom/', f's3://{S3_BUCKET}/model/custom/', sm_session)
+            upload(f'{LOCAL_MODEL_DIR}/', f's3://{S3_BUCKET}/model/custom/', sm_session)
 
             # Copy vocab.txt to local model directory - this is needed to re-create the trained MLM
             logger.info('Copying custom vocabulary to local model artifacts location to faciliate model evaluation')
-            shutil.copyfile(f'{path}/vocab.txt', '/tmp/cache/model/custom/vocab.txt')
+            shutil.copyfile(f'{path}/vocab.txt', f'{LOCAL_MODEL_DIR}/vocab.txt')
 
             # Copy vocab.txt to saved model artifacts location in S3
             logger.info(f'Copying custom vocabulary from [{path}/vocab.txt] to [s3://{S3_BUCKET}/model/custom/] for future stages of ML pipeline')
@@ -176,7 +181,7 @@ if __name__ == '__main__':
 
             # Evaluate trained model for fill mask task
             logger.info('Create fill-mask task pipeline to evaluate trained MLM')
-            fill_mask = pipeline('fill-mask', model='/tmp/cache/model/custom')
+            fill_mask = pipeline('fill-mask', model=LOCAL_MODEL_DIR)
             df = pd.read_csv(f's3://{S3_BUCKET}/data/eval/eval_mlm.csv')
 
             for gt, masked_sentence in zip(df.ground_truth.tolist(), df.masked.tolist()):

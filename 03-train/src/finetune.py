@@ -75,6 +75,8 @@ if __name__ == '__main__':
     SAVE_STEPS = 10000
     SAVE_TOTAL_LIMIT = 2
     
+    LOCAL_DATA_DIR = '/tmp/cache/data/bert/processed'
+    LOCAL_MODEL_DIR = '/tmp/cache/model/finetuned'
     # Setup SageMaker Session for S3Downloader and S3Uploader
     s3 = boto3.resource('s3')
     boto_session = boto3.session.Session(region_name=REGION)
@@ -87,18 +89,17 @@ if __name__ == '__main__':
                 os.makedirs(ebs_path, exist_ok=True)
             S3Downloader.download(s3_path, ebs_path, sagemaker_session=session)
         except FileExistsError:  # to avoid race condition between GPUs
-            logger.info('File Exists!')
+            logger.info('Ignoring FileExistsError to avoid I/O race conditions.')
+        except FileNotFoundError:
+            logger.info('Ignoring FileNotFoundError to avoid I/O race conditions.')
         
         
     def upload(ebs_path: str, s3_path: str, session: Session) -> None:
         S3Uploader.upload(ebs_path, s3_path, sagemaker_session=session)
         
-    
-    path = '/tmp/cache/data/bert/processed/'
     # Copy preprocessed datasets from S3 to local EBS volume (cache dir)
-    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/bert/processed/] to [{path}]')
-    download(f's3://{S3_BUCKET}/data/bert/processed/', path, sm_session)
-    
+    logger.info(f'Downloading preprocessed datasets from [{S3_BUCKET}/data/bert/processed/] to [{LOCAL_DATA_DIR}/]')
+    download(f's3://{S3_BUCKET}/data/bert/processed/', f'{LOCAL_DATA_DIR}/', sm_session)
     
     # Re-create original BERT WordPiece tokenizer 
     logger.info(f'Re-creating original BERT tokenizer')
@@ -145,21 +146,21 @@ if __name__ == '__main__':
     
     
     if current_host == master_host:
-        if not os.path.exists('/tmp/cache/model/finetuned'):
-            os.makedirs('/tmp/cache/model/finetuned', exist_ok=True)
+        if not os.path.exists(LOCAL_MODEL_DIR):
+            os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
 
         # Save trained model to local model directory
-        logger.info(f'Saving trained MLM to [/tmp/cache/model/finetuned/]')
-        trainer.save_model('/tmp/cache/model/finetuned')
+        logger.info(f'Saving trained MLM to [{LOCAL_MODEL_DIR}/]')
+        trainer.save_model(LOCAL_MODEL_DIR)
 
-        if os.path.exists('/tmp/cache/model/finetuned/pytorch_model.bin') and os.path.exists('/tmp/cache/model/finetuned/config.json'):
+        if os.path.exists(f'{LOCAL_MODEL_DIR}/pytorch_model.bin') and os.path.exists(f'{LOCAL_MODEL_DIR}/config.json'):
             # Copy trained model from local directory of the training cluster to S3 
             logger.info(f'Copying saved model from local to [s3://{S3_BUCKET}/model/finetuned/]')
-            upload('/tmp/cache/model/finetuned/', f's3://{S3_BUCKET}/model/finetuned/', sm_session)
+            upload(f'{LOCAL_MODEL_DIR}/', f's3://{S3_BUCKET}/model/finetuned/', sm_session)
 
             # Evaluate the trained model 
             logger.info('Create fill-mask task pipeline to evaluate trained MLM')
-            fill_mask = pipeline('fill-mask', model='/tmp/cache/model/finetuned', tokenizer=tokenizer)
+            fill_mask = pipeline('fill-mask', model=LOCAL_MODEL_DIR, tokenizer=tokenizer)
             df = pd.read_csv(f's3://{S3_BUCKET}/data/eval/eval_mlm.csv')
 
             for gt, masked_sentence in zip(df.ground_truth.tolist(), df.masked.tolist()):
