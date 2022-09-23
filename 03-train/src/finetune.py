@@ -3,6 +3,7 @@ from transformers import TrainingArguments
 from transformers import BertTokenizerFast
 from transformers import BertForMaskedLM
 from sagemaker.s3 import S3Downloader
+from sagemaker.session import Session
 from sagemaker.s3 import S3Uploader
 from transformers import pipeline 
 from datasets import load_dataset
