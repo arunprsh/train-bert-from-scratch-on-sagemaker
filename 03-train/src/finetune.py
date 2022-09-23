@@ -108,7 +108,7 @@ if __name__ == '__main__':
     logger.info(f'Tokenizer: {tokenizer}')
 
     # Read dataset 
-    chunked_datasets = datasets.load_from_disk(path)
+    chunked_datasets = datasets.load_from_disk(LOCAL_DATA_DIR)
     logger.info(f'Chunked datasets: {chunked_datasets}')
     
    
