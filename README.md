@@ -1,5 +1,9 @@
 ## Large Language Model (LLM) from Scratch on Amazon SageMaker
-This repository contains the supporting notebooks for a blog post series on training an LLM from scratch with a custom domain corpus and Amazon SageMaker. The series covers the following topics:
+This repository contains the supporting notebooks for a medium article on training an LLM from scratch with a custom domain corpus and Amazon SageMaker.
+
+![alt text](./img/intermediate-training.png "Intermediate Training")
+
+The series covers the following topics:
 
 ### Module 1: Acquiring the dataset
 Learn how to acquire and preprocess your custom domain corpus for training the LLM.
